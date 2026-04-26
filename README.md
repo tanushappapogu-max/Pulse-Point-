@@ -6,7 +6,7 @@ Instead of adding more spoken directions, Pulse Point explores how a phone and o
 
 ## Projects
 
-The public Vercel website deploys from [`pulse-point`](./pulse-point).
+The public Vercel app deploys from [`pulse-point`](./pulse-point). It runs in the browser with live camera object detection.
 
 ```bash
 npm run build --prefix pulse-point
@@ -33,11 +33,17 @@ npm run dev
 ## Prototype Goals
 
 - Preserve hearing by keeping guidance tactile instead of audio-heavy.
-- Demonstrate object detection and recognition for requests like “find my mouse.”
+- Run browser camera object detection for requests like “find my mouse.”
 - Show LiDAR/camera spatial awareness through a 3D room-map concept.
 - Guide the user through request, scan, target lock, orientation, walking, and close-range handoff.
 - Visualize a 3x3 haptic matrix ring vocabulary for direction, proximity, and confirmation signals.
 - Provide a clean foundation for a TSA concept demo, pitch deck, or future hardware/software prototype.
+
+## Current Web Status
+
+The Vercel app is functional in the browser: it requests camera permission, loads an object detection model, draws boxes around detected objects, locks onto the requested target class, estimates direction/distance from the camera frame, and triggers phone vibration when supported.
+
+Because websites cannot access iPhone LiDAR room meshes directly, full LiDAR mapping still belongs in the native mobile app path.
 
 ## Current Mobile Status
 
