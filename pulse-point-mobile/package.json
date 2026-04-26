@@ -1,0 +1,29 @@
+{
+  "name": "pulse-point-mobile",
+  "version": "0.1.0",
+  "private": true,
+  "main": "expo/AppEntry.js",
+  "scripts": {
+    "start": "expo start",
+    "ios": "expo start --ios",
+    "android": "expo start --android",
+    "web": "expo start --web"
+  },
+  "dependencies": {
+    "@expo/vector-icons": "^14.1.0",
+    "expo": "^53.0.0",
+    "expo-asset": "~11.1.7",
+    "expo-camera": "~16.1.11",
+    "expo-haptics": "~14.1.4",
+    "expo-sensors": "~14.1.4",
+    "expo-status-bar": "~2.2.3",
+    "react": "19.0.0",
+    "react-native": "0.79.6",
+    "react-native-safe-area-context": "5.4.0",
+    "react-native-svg": "15.11.2",
+    "undefined": ".npm-cache"
+  },
+  "devDependencies": {
+    "@babel/core": "^7.25.2"
+  }
+}

@@ -4,9 +4,19 @@ Pulse Point is an early mobile-app prototype for SSE, Synchronous Spatial Echo: 
 
 Instead of adding more spoken directions, Pulse Point explores how a phone and optional haptic ring can translate nearby space into touch. The core flow is simple: the user says what they need to find, the app scans the room with camera/LiDAR-style sensing, recognizes the object, builds a 3D spatial map, orients the user, and guides them with haptics until they are close enough to reach safely.
 
-## Project
+## Projects
 
-The starter app lives in [`pulse-point`](./pulse-point).
+The real mobile app lives in [`pulse-point-mobile`](./pulse-point-mobile).
+
+```bash
+cd pulse-point-mobile
+npm install --cache .npm-cache
+npm start
+```
+
+Scan the Expo QR code with Expo Go on your phone. The app uses the phone camera, haptics, and motion sensors for the object-finding guidance flow.
+
+The visual web prototype lives in [`pulse-point`](./pulse-point).
 
 ```bash
 cd pulse-point
@@ -22,3 +32,9 @@ npm run dev
 - Guide the user through request, scan, target lock, orientation, walking, and close-range handoff.
 - Visualize a 3x3 haptic matrix ring vocabulary for direction, proximity, and confirmation signals.
 - Provide a clean foundation for a TSA concept demo, pitch deck, or future hardware/software prototype.
+
+## Current Mobile Status
+
+The mobile app is functional as an Expo app: it opens the camera, requests camera permission, reads compass heading, triggers haptics, tracks a target-finding state machine, and displays spatial guidance. The object-recognition result is currently simulated so the flow can run on any phone through Expo Go.
+
+True LiDAR mesh capture and live object recognition require a native build path with iOS ARKit/CoreML or Android ARCore/ML Kit. The mobile app is structured so that detection and spatial mapping can be replaced with native services next.
