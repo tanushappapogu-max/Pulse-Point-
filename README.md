@@ -6,6 +6,12 @@ Instead of adding more spoken directions, Pulse Point explores how a phone and o
 
 ## Projects
 
+The public Vercel website deploys from [`pulse-point`](./pulse-point).
+
+```bash
+npm run build --prefix pulse-point
+```
+
 The real mobile app lives in [`pulse-point-mobile`](./pulse-point-mobile).
 
 ```bash
@@ -38,3 +44,14 @@ npm run dev
 The mobile app is functional as an Expo app: it opens the camera, requests camera permission, reads compass heading, triggers haptics, tracks a target-finding state machine, and displays spatial guidance. The object-recognition result is currently simulated so the flow can run on any phone through Expo Go.
 
 True LiDAR mesh capture and live object recognition require a native build path with iOS ARKit/CoreML or Android ARCore/ML Kit. The mobile app is structured so that detection and spatial mapping can be replaced with native services next.
+
+## Deploy To Vercel
+
+Import this GitHub repo into Vercel. The included `vercel.json` builds the `pulse-point` website and publishes `pulse-point/dist`.
+
+For the Vercel project settings, keep the repository root as the root directory. Vercel will run:
+
+```bash
+cd pulse-point && npm install
+cd pulse-point && npm run build
+```

@@ -1,0 +1,6 @@
+{
+  "installCommand": "cd pulse-point && npm install",
+  "buildCommand": "cd pulse-point && npm run build",
+  "outputDirectory": "pulse-point/dist",
+  "framework": "vite"
+}
