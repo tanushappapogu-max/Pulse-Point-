@@ -24,6 +24,7 @@
     "undefined": ".npm-cache"
   },
   "devDependencies": {
-    "@babel/core": "^7.25.2"
+    "@babel/core": "^7.25.2",
+    "@expo/ngrok": "^4.1.3"
   }
 }
