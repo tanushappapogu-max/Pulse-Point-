@@ -8,6 +8,9 @@ import './styles.css';
 const targetAliases = {
   'my mouse': ['mouse'],
   mouse: ['mouse'],
+  'computer mouse': ['mouse'],
+  trackpad: ['mouse'],
+  cursor: ['mouse'],
   phone: ['cell phone'],
   iphone: ['cell phone'],
   'cell phone': ['cell phone'],
@@ -49,8 +52,10 @@ function App() {
   const [match, setMatch] = useState(null);
   const [error, setError] = useState('');
   const [isRunning, setIsRunning] = useState(false);
+  const [hapticsSupported, setHapticsSupported] = useState(true);
 
   useEffect(() => {
+    setHapticsSupported('vibrate' in navigator);
     return () => stopScanner();
   }, []);
 
@@ -74,7 +79,7 @@ function App() {
       fireHaptic('looking', true);
 
       if (!modelRef.current) {
-        modelRef.current = await cocoSsd.load({ base: 'lite_mobilenet_v2' });
+        modelRef.current = await cocoSsd.load({ base: 'mobilenet_v2' });
       }
 
       setStatus('looking');
@@ -104,8 +109,12 @@ function App() {
       return;
     }
 
-    const predictions = await model.detect(video, 20, 0.32);
-    const targetMatch = findTarget(predictions, target);
+    const predictions = await model.detect(video, 60, 0.18);
+    const frame = {
+      width: video.videoWidth || 640,
+      height: video.videoHeight || 480
+    };
+    const targetMatch = findTarget(predictions, target, frame);
     draw(predictions, targetMatch);
 
     if (!targetMatch) {
@@ -118,15 +127,11 @@ function App() {
       return;
     }
 
-    const frame = {
-      width: video.videoWidth || 640,
-      height: video.videoHeight || 480
-    };
     const guidance = getGuidance(targetMatch, frame, previousAreaRef.current);
     previousAreaRef.current = guidance.area;
 
     setMatch({
-      name: targetMatch.class,
+      name: targetMatch.isCandidate ? target : targetMatch.class,
       score: targetMatch.score,
       direction: guidance.direction,
       distance: guidance.distance
@@ -226,7 +231,13 @@ function App() {
 
       <div className="signal-strip" aria-live="polite">
         <strong>{status}</strong>
-        <span>{match ? `${match.direction} · ${match.distance}` : 'scan slowly'}</span>
+        <span>
+          {match
+            ? `${match.direction} · ${match.distance}`
+            : hapticsSupported
+              ? 'scan slowly'
+              : 'iPhone web haptics blocked'}
+        </span>
       </div>
     </main>
   );
@@ -274,11 +285,15 @@ async function setWidestZoom(stream) {
   }
 }
 
-function findTarget(predictions, target) {
+function findTarget(predictions, target, frame) {
   const aliases = getAliases(target);
-  return predictions
+  const exactMatch = predictions
     .filter((prediction) => aliases.includes(prediction.class.toLowerCase()))
     .sort((a, b) => b.score - a.score)[0];
+
+  if (exactMatch) return exactMatch;
+
+  return findCenterCandidate(predictions, frame, target);
 }
 
 function getAliases(target) {
@@ -316,6 +331,28 @@ function getGuidance(prediction, frame, previousArea) {
   }
 
   return { signal: 'right', status: 'right', direction: 'turn right', distance, area };
+}
+
+function findCenterCandidate(predictions, frame, target) {
+  const normalizedTarget = target.trim().toLowerCase();
+  const allowFallback = normalizedTarget.length > 0;
+  if (!allowFallback) return null;
+
+  const centerX = frame.width / 2;
+  const centerY = frame.height / 2;
+
+  return predictions
+    .map((prediction) => {
+      const [x, y, width, height] = prediction.bbox;
+      const boxCenterX = x + width / 2;
+      const boxCenterY = y + height / 2;
+      const normalizedDistance = Math.hypot((boxCenterX - centerX) / frame.width, (boxCenterY - centerY) / frame.height);
+      const area = (width * height) / (frame.width * frame.height);
+      const centerScore = prediction.score + area * 1.6 - normalizedDistance * 1.4;
+      return { ...prediction, score: prediction.score * 0.72, centerScore, isCandidate: true };
+    })
+    .filter((prediction) => prediction.centerScore > 0.12 && prediction.score > 0.14)
+    .sort((a, b) => b.centerScore - a.centerScore)[0];
 }
 
 function estimateDistance(area) {

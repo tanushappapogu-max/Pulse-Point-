@@ -43,7 +43,7 @@ npm run dev
 
 The Vercel app is functional in the browser: it requests camera permission, loads an object detection model, draws boxes around detected objects, locks onto the requested target class, estimates direction/distance from the camera frame, and triggers phone vibration when supported.
 
-Because websites cannot access iPhone LiDAR room meshes directly, full LiDAR mapping still belongs in the native mobile app path.
+Because iPhone browsers do not expose reliable vibration/haptics and websites cannot access iPhone LiDAR room meshes directly, true iPhone haptic guidance and LiDAR mapping belong in the native mobile app path.
 
 ## Current Mobile Status
 
