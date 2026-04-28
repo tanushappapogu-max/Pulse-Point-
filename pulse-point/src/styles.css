@@ -124,7 +124,7 @@ input {
   bottom: max(16px, env(safe-area-inset-bottom));
   z-index: 9;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 52px;
+  grid-template-columns: 52px minmax(0, 1fr) 52px;
   gap: 10px;
   padding: 10px;
   border: 1px solid rgba(255, 255, 255, 0.18);
@@ -133,24 +133,67 @@ input {
   backdrop-filter: blur(18px);
 }
 
-.target-bar input {
-  min-width: 0;
+/* Mic button */
+.mic-btn {
+  display: grid;
+  place-items: center;
+  width: 52px;
   height: 52px;
   border: 0;
   border-radius: 12px;
-  outline: 0;
-  padding: 0 16px;
   color: #ffffff;
-  background: rgba(255, 255, 255, 0.12);
-  font-size: 1.08rem;
+  background: rgba(255, 255, 255, 0.14);
+  transition: background 0.15s;
+}
+
+.mic-btn.mic-active {
+  color: #03100c;
+  background: #00ff9d;
+  animation: mic-pulse 0.75s ease-in-out infinite;
+}
+
+@keyframes mic-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(0, 255, 157, 0.55); }
+  50%       { box-shadow: 0 0 0 10px rgba(0, 255, 157, 0); }
+}
+
+/* Target text display */
+.target-display {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  height: 52px;
+  padding: 0 14px;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.10);
+  font-size: 1.0rem;
   font-weight: 850;
+  color: #ffffff;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
-.target-bar input::placeholder {
-  color: rgba(255, 255, 255, 0.62);
+.target-ph {
+  color: rgba(255, 255, 255, 0.46);
+  font-weight: 550;
 }
 
-.target-bar button {
+.auto-label {
+  flex-shrink: 0;
+  padding: 2px 7px;
+  border-radius: 6px;
+  background: rgba(0, 255, 157, 0.2);
+  color: #00ff9d;
+  font-size: 0.66rem;
+  font-weight: 900;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+}
+
+/* Scan / stop button */
+.scan-btn {
   display: grid;
   place-items: center;
   width: 52px;
@@ -159,6 +202,102 @@ input {
   border-radius: 12px;
   color: #03100c;
   background: #00ff9d;
+}
+
+/* SOS button — bottom right, above target bar */
+.sos-btn {
+  position: absolute;
+  right: max(14px, env(safe-area-inset-right));
+  bottom: calc(max(16px, env(safe-area-inset-bottom)) + 86px);
+  z-index: 9;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 10px 16px;
+  border: 0;
+  border-radius: 999px;
+  color: #ffffff;
+  background: rgba(200, 30, 60, 0.88);
+  font-size: 0.84rem;
+  font-weight: 900;
+  backdrop-filter: blur(8px);
+}
+
+/* Cancel SOS — same slot as sos-btn */
+.cancel-sos-btn {
+  position: absolute;
+  right: max(14px, env(safe-area-inset-right));
+  bottom: calc(max(16px, env(safe-area-inset-bottom)) + 86px);
+  z-index: 9;
+  padding: 10px 18px;
+  border: 0;
+  border-radius: 999px;
+  color: #ffffff;
+  background: rgba(255, 255, 255, 0.18);
+  font-size: 0.88rem;
+  font-weight: 900;
+  backdrop-filter: blur(8px);
+}
+
+/* Autopilot next option — centered above target bar */
+.next-cand-btn {
+  position: absolute;
+  bottom: calc(max(16px, env(safe-area-inset-bottom)) + 86px);
+  left: 50%;
+  z-index: 9;
+  transform: translateX(-50%);
+  padding: 10px 22px;
+  border: 0;
+  border-radius: 999px;
+  color: #03100c;
+  background: #00ff9d;
+  font-size: 0.9rem;
+  font-weight: 900;
+  white-space: nowrap;
+}
+
+/* Claude AI status pill — top right, below loading pill slot */
+.claude-pill {
+  position: absolute;
+  z-index: 10;
+  right: max(14px, env(safe-area-inset-right));
+  top: max(14px, env(safe-area-inset-top));
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 8px 12px;
+  border-radius: 999px;
+  color: #03100c;
+  background: rgba(0, 200, 145, 0.88);
+  font-size: 0.78rem;
+  font-weight: 900;
+  backdrop-filter: blur(8px);
+}
+
+.claude-pill svg {
+  animation: spin 1s linear infinite;
+}
+
+.claude-found {
+  background: #00ff9d;
+}
+
+.claude-found svg {
+  animation: none;
+}
+
+/* Emergency SOS mode overlay */
+.sos-mode::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  pointer-events: none;
+  background: rgba(190, 20, 50, 0.16);
+}
+
+.sos-mode .signal-strip strong {
+  color: #ff4466;
 }
 
 .signal-strip {
@@ -228,7 +367,7 @@ input {
   .target-bar {
     left: 50%;
     right: auto;
-    width: min(440px, calc(100vw - 32px));
+    width: min(480px, calc(100vw - 32px));
     transform: translateX(-50%);
   }
 }
