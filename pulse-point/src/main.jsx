@@ -1,20 +1,18 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import * as tf from '@tensorflow/tfjs';
-import { pipeline } from '@xenova/transformers';
 import { Camera, Loader2, ScanLine, Square, Mic, AlertTriangle } from 'lucide-react';
 import './styles.css';
 
 const YOLO_INPUT = 640;
 const LIGHT_FPS = 10;
-const HEAVY_FPS = 2; // TODO: set this to your desired fallback fps (X)
+const HEAVY_COOLDOWN_MS = 2500; // gemini, at most once per 2.5s
 const NO_FIND_SECONDS = 3;
 const NO_FIND_FRAMES = Math.round(LIGHT_FPS * NO_FIND_SECONDS);
 const GEMINI_MODEL = 'gemini-2.5-flash-lite';
-const EMBED_MODEL = 'Xenova/all-MiniLM-L6-v2';
-const VECTOR_SIM_THRESHOLD = 0.78;
+const FUZZY_SIM_THRESHOLD = 0.42;
 
-// ── COCO 80 class labels in official order ───────────────────────────────────
+// coco labels (main list)
 const COCO_LABELS = [
   'person','bicycle','car','motorcycle','airplane','bus','train','truck','boat',
   'traffic light','fire hydrant','stop sign','parking meter','bench','bird','cat',
@@ -54,55 +52,63 @@ const HAPTIC = {
   confirm: [200, 80, 200],
 };
 
-let embedderPromise;
-const cocoEmbeddingCache = new Map();
-const targetEmbeddingCache = new Map();
-
-async function getEmbedder() {
-  if (!embedderPromise) {
-    embedderPromise = pipeline('feature-extraction', EMBED_MODEL, { quantized: true });
-  }
-  return embedderPromise;
+function tokenize(text) {
+  return normalizeTargetText(text)
+    .split(' ')
+    .filter(Boolean);
 }
 
-async function embedText(text, cache) {
-  const norm = text.trim().toLowerCase();
+function bigrams(text) {
+  const compact = normalizeTargetText(text).replace(/\s+/g, '');
+  const grams = [];
+  for (let i = 0; i < compact.length - 1; i++) grams.push(compact.slice(i, i + 2));
+  return grams;
+}
+
+function jaccard(a, b) {
+  if (!a.length || !b.length) return 0;
+  const setA = new Set(a);
+  const setB = new Set(b);
+  let intersection = 0;
+  setA.forEach(item => { if (setB.has(item)) intersection++; });
+  return intersection / (setA.size + setB.size - intersection || 1);
+}
+
+function stringSimilarity(a, b) {
+  const normA = normalizeTargetText(a);
+  const normB = normalizeTargetText(b);
+  if (!normA || !normB) return 0;
+  if (normA === normB) return 1;
+
+  const tokensA = tokenize(normA);
+  const tokensB = tokenize(normB);
+  const tokenScore = jaccard(tokensA, tokensB);
+  const gramScore = jaccard(bigrams(normA), bigrams(normB));
+  const prefixScore = normA.startsWith(normB) || normB.startsWith(normA) ? 0.85 : 0;
+  return Math.max(tokenScore * 0.9 + gramScore * 0.4, prefixScore);
+}
+
+function normalizeTargetText(text) {
+  return text
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .replace(/\b(s|es)\b/g, '')
+    .trim();
+}
+
+function findClosestCocoLabel(text) {
+  const norm = normalizeTargetText(text);
   if (!norm) return null;
-  if (cache.has(norm)) return cache.get(norm);
-  const extractor = await getEmbedder();
-  const output = await extractor(norm, { pooling: 'mean', normalize: true });
-  const vec = Array.from(output.data || []);
-  if (vec.length) cache.set(norm, vec);
-  return vec.length ? vec : null;
-}
 
-function cosineSimilarity(a, b) {
-  let dot = 0, na = 0, nb = 0;
-  for (let i = 0; i < a.length; i++) {
-    dot += a[i] * b[i];
-    na += a[i] * a[i];
-    nb += b[i] * b[i];
+  let best = { label: null, score: 0 };
+  for (const label of COCO_LABELS) {
+    const score = stringSimilarity(norm, label);
+    if (score > best.score) best = { label, score };
   }
-  return dot / (Math.sqrt(na) * Math.sqrt(nb) || 1);
-}
 
-async function findClosestCocoLabel(text) {
-  try {
-    const targetVec = await embedText(text, targetEmbeddingCache);
-    if (!targetVec) return null;
-
-    let best = { label: null, score: 0 };
-    for (const label of COCO_LABELS) {
-      const labelVec = await embedText(label, cocoEmbeddingCache);
-      if (!labelVec) continue;
-      const sim = cosineSimilarity(targetVec, labelVec);
-      if (sim > best.score) best = { label, score: sim };
-    }
-
-    return best.score >= VECTOR_SIM_THRESHOLD ? best : null;
-  } catch {
-    return null;
-  }
+  return best.score >= FUZZY_SIM_THRESHOLD ? best : null;
 }
 
 async function loadYoloModel() {
@@ -217,8 +223,7 @@ function iou(a, b) {
   return union <= 0 ? 0 : inter / union;
 }
 
-// ── Gemini 2.5 Flash Lite API ────────────────────────────────────────────────
-// API key must be in .env as VITE_GEMINI_API_KEY
+// gemini api (VITE_GEMINI_API_KEY)
 
 async function callGeminiJson(imageBase64, prompt) {
   const key = import.meta.env.VITE_GEMINI_API_KEY;
@@ -297,8 +302,7 @@ Requirements:
     confidence: parsed.confidence || 0.8,
   };
 }
-// ── App ────────────────────────────────────────────────────────────────────────
-
+// app
 function App() {
   const videoRef          = useRef(null);
   const canvasRef         = useRef(null);
@@ -313,10 +317,9 @@ function App() {
   const prevAreaRef       = useRef(0);
   const foundOnceRef      = useRef(false);
   const noFindFramesRef   = useRef(0);
-  const aiBoxRef          = useRef(null); // last AI-returned bbox {x,y,w,h,confidence}
+  const aiBoxRef          = useRef(null); // last ai bbox {x,y,w,h,confidence}
   const aiInFlightRef     = useRef(false);
-  const localTargetRef    = useRef(null); // { label, score, source }
-  const localPendingRef   = useRef(false);
+  const localTargetRef    = useRef(null); // {label, score, source} map
   const targetRef         = useRef('');  // always-current target for the detect loop
 
   const [target,        setTargetState]   = useState('');
@@ -337,7 +340,7 @@ function App() {
     return () => stopScanner();
   }, []);
 
-  // Keep ref in sync so the detect animation loop always reads the latest target
+  // keep targetRef in sync w/ the loop
   function setTarget(t) {
     targetRef.current = t;
     setTargetState(t);
@@ -349,31 +352,24 @@ function App() {
     aiBoxRef.current  = null;
     aiInFlightRef.current = false;
     localTargetRef.current = null;
-    localPendingRef.current = false;
     setAiLabel('');
-    void resolveLocalTarget(t);
+    resolveLocalTarget(t);
   }
 
-  async function resolveLocalTarget(tgt) {
+  function resolveLocalTarget(tgt) {
     if (!tgt) return;
     const direct = resolveCocoTarget(tgt);
     if (direct) {
-      localTargetRef.current = { label: direct, score: 1, source: 'coco' };
+      localTargetRef.current = { label: direct, score: 1, source: 'alias' };
       return;
     }
-    if (localPendingRef.current) return;
-    localPendingRef.current = true;
-    try {
-      const closest = await findClosestCocoLabel(tgt);
-      if (closest?.label) {
-        localTargetRef.current = { label: closest.label, score: closest.score, source: 'vector' };
-      }
-    } finally {
-      localPendingRef.current = false;
+    const closest = findClosestCocoLabel(tgt);
+    if (closest?.label) {
+      localTargetRef.current = { label: closest.label, score: closest.score, source: 'fuzzy' };
     }
   }
 
-  // ── Voice input ──────────────────────────────────────────────────────────────
+  // voice input
 
   function startListening() {
     const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
@@ -392,12 +388,12 @@ function App() {
   async function handleVoice(text) {
     const lower = text.toLowerCase();
 
-    // Emergency
+    // emergeny words
     if (/\b(sos|emergency|help|exit|danger|fire|lost)\b/i.test(lower)) {
       triggerSOS(); return;
     }
 
-    // Vague / intent-based → autopilot
+    // vague intent → autopilot
     const isVague =
       /\b(something|anything)\b/i.test(lower) ||
       /\b(eat|food|hungry|snack|drink|thirsty)\b/i.test(lower) ||
@@ -408,7 +404,7 @@ function App() {
       runAutopilot(text); return;
     }
 
-    // Direct target — strip navigation phrases
+    // direct target — strip filler words
     const extracted = lower
       .replace(/where\s+is\s+(my\s+|the\s+)?/g, '')
       .replace(/find\s+(my\s+|the\s+|a\s+)?/g, '')
@@ -424,8 +420,7 @@ function App() {
     }
   }
 
-  // ── Autopilot — intent-based object ranking ──────────────────────────────────
-
+  // autopilot
   async function runAutopilot(intent) {
     setMode('autopilot');
     setStatus('thinking…');
@@ -464,8 +459,7 @@ If nothing matches, return {"candidates":[],"positions":[]}`
     vibe('confirm', true);
   }
 
-  // ── Emergency SOS ────────────────────────────────────────────────────────────
-
+  // sos
   async function triggerSOS() {
     setMode('sos');
     setStatus('🆘 SOS — locating exit');
@@ -502,8 +496,7 @@ If no exit visible: {"direction":"forward","description":"Follow the wall to you
     setMode('normal'); setStatus('ready'); setSignal('looking'); setMatch(null);
   }
 
-  // ── Camera + detection loop ──────────────────────────────────────────────────
-
+  // camera + detect
   async function startScanner() {
     setError('');
     setStatus('camera');
@@ -560,7 +553,7 @@ If no exit visible: {"direction":"forward","description":"Follow the wall to you
     }
 
     const tgt = targetRef.current;
-    if (tgt && !localTargetRef.current && !localPendingRef.current) {
+    if (tgt && !localTargetRef.current) {
       void resolveLocalTarget(tgt);
     }
 
@@ -568,7 +561,7 @@ If no exit visible: {"direction":"forward","description":"Follow the wall to you
     const now = performance.now();
 
     const lightInterval = 1000 / LIGHT_FPS;
-    const heavyInterval = 1000 / HEAVY_FPS;
+    const heavyInterval = HEAVY_COOLDOWN_MS;
     const ranLight = now - lastLightRunRef.current >= lightInterval;
 
     let predictions = lastPredsRef.current;
@@ -585,13 +578,11 @@ If no exit visible: {"direction":"forward","description":"Follow the wall to you
     const cocoMatch = cocoMatchRaw ? {
       ...cocoMatchRaw,
       displayClass: mappedLabel !== tgt ? tgt : cocoMatchRaw.class,
-      fromVector: localInfo?.source === 'vector',
       source: cocoMatchRaw,
     } : null;
 
     const localCanFind = Boolean(mappedLabel);
-    const waitingForVector = !localCanFind && localPendingRef.current;
-    const needsAi = tgt && !cocoMatch && ((!localCanFind && !waitingForVector) || noFindFramesRef.current > NO_FIND_FRAMES);
+    const needsAi = tgt && !cocoMatch && (!localCanFind || noFindFramesRef.current > NO_FIND_FRAMES);
     const shouldRunHeavy = needsAi && (now - lastHeavyRunRef.current >= heavyInterval);
 
     if (shouldRunHeavy && !aiInFlightRef.current) {
@@ -673,7 +664,7 @@ If no exit visible: {"direction":"forward","description":"Follow the wall to you
     const ctx = canvas.getContext('2d');
     ctx.clearRect(0, 0, W, H);
 
-    // All non-target predictions dimmed
+    // non-target preds, dimmed a bit
     predictions.forEach(p => {
       if (targetMatch?.source === p) return;
       const [x, y, w, h] = p.bbox;
@@ -712,8 +703,6 @@ If no exit visible: {"direction":"forward","description":"Follow the wall to you
     navigator.vibrate(HAPTIC[sig] || HAPTIC.looking);
   }
 
-  // ── Render ───────────────────────────────────────────────────────────────────
-
   return (
     <main className={`scanner signal-${signal}${mode === 'sos' ? ' sos-mode' : ''}`}>
       <video ref={videoRef} playsInline muted />
@@ -731,7 +720,7 @@ If no exit visible: {"direction":"forward","description":"Follow the wall to you
       )}
 
       {aiLabel && (
-        <div className={`claude-pill${aiLabel === 'found' ? ' claude-found' : ''}`}>
+        <div className={`ai-pill${aiLabel === 'found' ? ' ai-found' : ''}`}>
           {aiLabel === 'scanning'
             ? <><Loader2 size={14} />AI scanning…</>
             : '✦ AI found it'}
@@ -742,7 +731,7 @@ If no exit visible: {"direction":"forward","description":"Follow the wall to you
 
       <div className="reticle" aria-hidden="true"><span /></div>
 
-      {/* SOS button — top right, always visible when running */}
+      {/* SOS btn, top right */}
       {isRunning && mode !== 'sos' && (
         <button className="sos-btn" onClick={triggerSOS} aria-label="Emergency SOS">
           <AlertTriangle size={16} />SOS
@@ -752,14 +741,14 @@ If no exit visible: {"direction":"forward","description":"Follow the wall to you
         <button className="cancel-sos-btn" onClick={cancelSOS}>✕ Cancel SOS</button>
       )}
 
-      {/* Autopilot: next option pill */}
+      {/* autopilot next option */}
       {mode === 'autopilot' && autoCands.length > 1 && autoIdx < autoCands.length - 1 && (
         <button className="next-cand-btn" onClick={nextAutoCand}>
           Next option →
         </button>
       )}
 
-      {/* Bottom bar */}
+      {/* bottom bar  */}
       <div className="target-bar">
         <button
           className={`mic-btn${isListening ? ' mic-active' : ''}`}
@@ -787,7 +776,7 @@ If no exit visible: {"direction":"forward","description":"Follow the wall to you
         </button>
       </div>
 
-      {/* Status strip — top left */}
+      {/* status strip */}
       <div className="signal-strip" aria-live="polite">
         <strong>{mode === 'sos' ? '🆘 SOS' : status}</strong>
         <span>
@@ -801,8 +790,7 @@ If no exit visible: {"direction":"forward","description":"Follow the wall to you
   );
 }
 
-// ── Camera helpers ─────────────────────────────────────────────────────────────
-
+// camera helpers
 async function getWideCameraStream() {
   const base = {
     video: { facingMode: { ideal: 'environment' }, width: { ideal: 1920 }, height: { ideal: 1080 }, aspectRatio: { ideal: 16 / 9 } },
@@ -838,8 +826,7 @@ function captureJpeg(video) {
   return canvas.toDataURL('image/jpeg', 0.82);
 }
 
-// ── Detection helpers ──────────────────────────────────────────────────────────
-
+// detect helpers
 function findTarget(predictions, target, frame, allowCandidate = true) {
   const aliases = getAliases(target);
   const exact   = predictions

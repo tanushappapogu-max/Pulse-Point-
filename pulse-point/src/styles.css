@@ -133,7 +133,7 @@ input {
   backdrop-filter: blur(18px);
 }
 
-/* Mic button */
+/* mic btn */
 .mic-btn {
   display: grid;
   place-items: center;
@@ -157,7 +157,7 @@ input {
   50%       { box-shadow: 0 0 0 10px rgba(0, 255, 157, 0); }
 }
 
-/* Target text display */
+/* target display */
 .target-display {
   display: flex;
   align-items: center;
@@ -192,7 +192,7 @@ input {
   text-transform: uppercase;
 }
 
-/* Scan / stop button */
+/* scan / stop btn */
 .scan-btn {
   display: grid;
   place-items: center;
@@ -204,7 +204,7 @@ input {
   background: #00ff9d;
 }
 
-/* SOS button — bottom right, above target bar */
+/* SOS btn */
 .sos-btn {
   position: absolute;
   right: max(14px, env(safe-area-inset-right));
@@ -223,7 +223,7 @@ input {
   backdrop-filter: blur(8px);
 }
 
-/* Cancel SOS — same slot as sos-btn */
+/* cancel sos */
 .cancel-sos-btn {
   position: absolute;
   right: max(14px, env(safe-area-inset-right));
@@ -239,7 +239,7 @@ input {
   backdrop-filter: blur(8px);
 }
 
-/* Autopilot next option — centered above target bar */
+/* autopilot — next option */
 .next-cand-btn {
   position: absolute;
   bottom: calc(max(16px, env(safe-area-inset-bottom)) + 86px);
@@ -256,8 +256,8 @@ input {
   white-space: nowrap;
 }
 
-/* Claude AI status pill — top right, below loading pill slot */
-.claude-pill {
+/* ai pill */
+.ai-pill {
   position: absolute;
   z-index: 10;
   right: max(14px, env(safe-area-inset-right));
@@ -274,19 +274,19 @@ input {
   backdrop-filter: blur(8px);
 }
 
-.claude-pill svg {
+.ai-pill svg {
   animation: spin 1s linear infinite;
 }
 
-.claude-found {
+.ai-found {
   background: #00ff9d;
 }
 
-.claude-found svg {
+.ai-found svg {
   animation: none;
 }
 
-/* Emergency SOS mode overlay */
+/* sos overlay */
 .sos-mode::before {
   content: '';
   position: absolute;
