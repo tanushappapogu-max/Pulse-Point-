@@ -12,3 +12,14 @@ expo-pulse-point-qr.png
 .DS_Store
 .env
 .env.local
+
+# ML model conversion artifacts (intermediate files, not the final web model)
+yolo11n.pt
+yolo11n.onnx
+yolo11n.pb
+yolo11n_saved_model/
+calibration_image_sample_data_20x128x128x3_float32.npy
+convert_tfjs.py
+
+# Python ML venv (lives at ~/ml-env, not in repo)
+ml-env/
