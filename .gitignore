@@ -13,6 +13,23 @@ expo-pulse-point-qr.png
 .env
 .env.local
 
+# Vercel
+.vercel/
+
+# Expo (managed)
+.expo-shared/
+web-build/
+
+# React Native native builds (if generated)
+ios/Pods/
+ios/build/
+android/.gradle/
+android/app/build/
+
+# OS
+Thumbs.db
+desktop.ini
+
 # ML model conversion artifacts (intermediate files, not the final web model)
 yolo11n.pt
 yolo11n.onnx
@@ -20,6 +37,9 @@ yolo11n.pb
 yolo11n_saved_model/
 calibration_image_sample_data_20x128x128x3_float32.npy
 convert_tfjs.py
+
+# Root-level duplicate web model output
+/yolo11n_web_model/
 
 # Python ML venv (lives at ~/ml-env, not in repo)
 ml-env/
