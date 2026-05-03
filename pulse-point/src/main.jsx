@@ -323,6 +323,7 @@ function App() {
   const targetRef         = useRef('');  // always-current target for the detect loop
 
   const [target,        setTargetState]   = useState('');
+  const [draftTarget,   setDraftTarget]   = useState('');
   const [status,        setStatus]        = useState('ready');
   const [signal,        setSignal]        = useState('looking');
   const [match,         setMatch]         = useState(null);
@@ -344,6 +345,7 @@ function App() {
   function setTarget(t) {
     targetRef.current = t;
     setTargetState(t);
+    setDraftTarget(t);
     foundOnceRef.current  = false;
     noFindFramesRef.current = 0;
     lastLightRunRef.current = 0;
@@ -354,6 +356,22 @@ function App() {
     localTargetRef.current = null;
     setAiLabel('');
     resolveLocalTarget(t);
+  }
+
+  function submitTypedTarget() {
+    const text = draftTarget.trim();
+    if (!text) return;
+    setError('');
+    setTarget(text);
+    setMode('normal');
+    if (!isRunning) startScanner(); else setStatus('looking');
+  }
+
+  function handleTypedKeyDown(e) {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      submitTypedTarget();
+    }
   }
 
   function resolveLocalTarget(tgt) {
@@ -373,13 +391,32 @@ function App() {
 
   function startListening() {
     const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-    if (!SR) { setError('Use Chrome for voice'); return; }
+    if (!SR) {
+      const isiOS = /iPad|iPhone|iPod/i.test(navigator.userAgent || '');
+      setError(isiOS
+        ? 'Voice input is not supported on iPhone Safari. Type below or use dictation.'
+        : 'Voice input is not supported in this browser. Type below.'
+      );
+      return;
+    }
     setError('');
     const r = new SR();
     r.continuous = false; r.interimResults = false; r.lang = 'en-US';
     setIsListening(true);
     r.onresult = e => { setIsListening(false); handleVoice(e.results[0][0].transcript.trim()); };
-    r.onerror  = ()  => { setIsListening(false); setError('Mic error — tap to retry'); };
+    r.onerror  = e  => {
+      setIsListening(false);
+      const err = e?.error;
+      if (err === 'not-allowed' || err === 'service-not-allowed') {
+        setError('Mic blocked — allow microphone access in browser settings.');
+      } else if (err === 'no-speech') {
+        setError('No speech heard — tap to retry.');
+      } else if (err === 'network') {
+        setError('Voice service unavailable — check connection or type below.');
+      } else {
+        setError('Voice input failed — type below.');
+      }
+    };
     r.onend    = ()  => setIsListening(false);
     navigator.vibrate?.([80]);
     r.start();
@@ -760,10 +797,21 @@ If no exit visible: {"direction":"forward","description":"Follow the wall to you
         </button>
 
         <div className="target-display" aria-label="Target object">
-          {mode === 'autopilot' && autoCands.length > 0
-            ? <><span className="auto-label">AUTO</span> {autoCands[autoIdx]}</>
-            : target || <span className="target-ph">say what to find…</span>
-          }
+          {mode === 'autopilot' && autoCands.length > 0 && (
+            <span className="auto-label">AUTO</span>
+          )}
+          <input
+            className="target-input"
+            type="text"
+            value={draftTarget}
+            onChange={e => setDraftTarget(e.target.value)}
+            onKeyDown={handleTypedKeyDown}
+            placeholder="say or type what to find…"
+            autoComplete="off"
+            autoCapitalize="off"
+            enterKeyHint="go"
+            aria-label="Type a target"
+          />
         </div>
 
         <button

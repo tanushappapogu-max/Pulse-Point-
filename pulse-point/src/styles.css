@@ -167,15 +167,21 @@ input {
   padding: 0 14px;
   border-radius: 12px;
   background: rgba(255, 255, 255, 0.10);
-  font-size: 1.0rem;
-  font-weight: 850;
   color: #ffffff;
-  white-space: nowrap;
   overflow: hidden;
-  text-overflow: ellipsis;
 }
 
-.target-ph {
+.target-input {
+  width: 100%;
+  border: 0;
+  outline: none;
+  background: transparent;
+  color: #ffffff;
+  font-size: 1.0rem;
+  font-weight: 850;
+}
+
+.target-input::placeholder {
   color: rgba(255, 255, 255, 0.46);
   font-weight: 550;
 }
