@@ -20,9 +20,44 @@ import { createDetectionResult, getHapticPattern, guidanceStages } from './src/s
 
 const flow = ['idle', 'scanning', 'targetLocked', 'orienting', 'walking', 'reaching', 'complete'];
 
-export default function App() {
+// tiny error boundary, pls no white screen
+class AppErrorBoundary extends React.Component {
+  constructor(props) {
+    super(props);
+    this.state = { hasError: false };
+  }
+
+  static getDerivedStateFromError() {
+    return { hasError: true };
+  }
+
+  componentDidCatch(error, info) {
+    console.error('Pulse Point crashed', error, info);
+  }
+
+  handleRetry = () => {
+    this.setState({ hasError: false });
+  };
+
+  render() {
+    if (!this.state.hasError) return this.props.children;
+
+    return (
+      <SafeAreaView style={styles.permissionScreen}>
+        <StatusBar style="light" />
+        <Text style={styles.permissionTitle}>Something went wrong</Text>
+        <Text style={styles.permissionText}>Try again. If it keeps failing, restart the app.</Text>
+        <Pressable style={styles.primaryButton} onPress={this.handleRetry}>
+          <Text style={styles.primaryButtonText}>Try again</Text>
+        </Pressable>
+      </SafeAreaView>
+    );
+  }
+}
+
+function AppContent() {
   const [permission, requestPermission] = useCameraPermissions();
-  const [target, setTarget] = useState('mouse');
+  const [target, setTarget] = useState('');
   const [stageKey, setStageKey] = useState('idle');
   const [detection, setDetection] = useState(null);
   const [heading, setHeading] = useState(0);
@@ -34,22 +69,30 @@ export default function App() {
   useEffect(() => {
     Magnetometer.setUpdateInterval(300);
     const subscription = Magnetometer.addListener((data) => {
-      const angle = Math.atan2(data.y, data.x) * (180 / Math.PI);
-      setHeading(Math.round(angle >= 0 ? angle : angle + 360));
+      // ANDROID axes are messy, normalize to 0-360
+      let angle = Math.atan2(data.y, data.x) * (180 / Math.PI);
+      angle = (angle + 360) % 360;
+      const headingValue = Platform.OS === 'android'
+        ? (360 - angle + 90) % 360
+        : angle;
+      setHeading(Math.round(headingValue));
     });
 
     return () => subscription.remove();
   }, []);
 
   useEffect(() => {
-    Animated.loop(
+    const animation = Animated.loop(
       Animated.timing(pulse, {
         toValue: 1,
         duration: stageKey === 'scanning' ? 900 : 1250,
         easing: Easing.inOut(Easing.ease),
         useNativeDriver: true
       })
-    ).start();
+    );
+
+    animation.start();
+    return () => animation.stop();
   }, [pulse, stageKey]);
 
   useEffect(() => {
@@ -66,6 +109,11 @@ export default function App() {
   }
 
   function nextStage() {
+    if (stageKey === 'complete') {
+      setStageKey('idle');
+      setDetection(null);
+      return;
+    }
     const next = flow[Math.min(stageIndex + 1, flow.length - 1)];
     setStageKey(next);
   }
@@ -103,7 +151,7 @@ export default function App() {
   return (
     <View style={styles.app}>
       <StatusBar style="light" />
-      <CameraView style={styles.camera} facing="back" autofocus="on" />
+      <CameraView style={styles.camera} facing="back" autoFocus="on" />
       <View style={styles.cameraShade} />
 
       <SafeAreaView style={styles.overlay}>
@@ -210,6 +258,14 @@ export default function App() {
         </View>
       </SafeAreaView>
     </View>
+  );
+}
+
+export default function App() {
+  return (
+    <AppErrorBoundary>
+      <AppContent />
+    </AppErrorBoundary>
   );
 }
 

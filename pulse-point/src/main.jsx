@@ -1,18 +1,18 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import * as tf from '@tensorflow/tfjs';
-import { Camera, Loader2, ScanLine, Square, Mic, AlertTriangle } from 'lucide-react';
+import { Camera, Loader2, ScanLine, Square, Mic } from 'lucide-react';
 import './styles.css';
 
 const YOLO_INPUT = 640;
 const LIGHT_FPS = 10;
-const HEAVY_COOLDOWN_MS = 2500; // gemini, at most once per 2.5s
+const HEAVY_COOLDOWN_MS = 2500; // ai cooldown, keep it chill
 const NO_FIND_SECONDS = 3;
 const NO_FIND_FRAMES = Math.round(LIGHT_FPS * NO_FIND_SECONDS);
-const GEMINI_MODEL = 'gemini-2.5-flash-lite';
+const GEMINI_MODEL = 'google/gemini-2.0-flash-lite-preview-02-05:free';
 const FUZZY_SIM_THRESHOLD = 0.42;
 
-// coco labels (main list)
+// COCO labels, big list incoming
 const COCO_LABELS = [
   'person','bicycle','car','motorcycle','airplane','bus','train','truck','boat',
   'traffic light','fire hydrant','stop sign','parking meter','bench','bird','cat',
@@ -85,7 +85,7 @@ function stringSimilarity(a, b) {
   const tokenScore = jaccard(tokensA, tokensB);
   const gramScore = jaccard(bigrams(normA), bigrams(normB));
   const prefixScore = normA.startsWith(normB) || normB.startsWith(normA) ? 0.85 : 0;
-  return Math.max(tokenScore * 0.9 + gramScore * 0.4, prefixScore);
+  return Math.min(1, Math.max(tokenScore * 0.9 + gramScore * 0.4, prefixScore));
 }
 
 function normalizeTargetText(text) {
@@ -94,7 +94,6 @@ function normalizeTargetText(text) {
     .toLowerCase()
     .replace(/[^a-z0-9\s]/g, ' ')
     .replace(/\s+/g, ' ')
-    .replace(/\b(s|es)\b/g, '')
     .trim();
 }
 
@@ -116,41 +115,52 @@ async function loadYoloModel() {
 }
 
 async function runYolo(video, model) {
-  const tfImg = tf.browser.fromPixels(video);
-  const resized = tf.image.resizeBilinear(tfImg, [YOLO_INPUT, YOLO_INPUT]);
-  const normalized = resized.div(255);
-  const batched = normalized.expandDims(0);
+  const tensors = [];
+  let output = null;
+  let outputTensor = null;
+  try {
+    const tfImg = tf.browser.fromPixels(video);
+    tensors.push(tfImg);
+    const resized = tf.image.resizeBilinear(tfImg, [YOLO_INPUT, YOLO_INPUT]);
+    tensors.push(resized);
+    const normalized = resized.div(255);
+    tensors.push(normalized);
+    const batched = normalized.expandDims(0);
+    tensors.push(batched);
 
-  const output = await model.executeAsync(batched);
-  const outputTensor = Array.isArray(output)
-    ? output[0]
-    : (output?.output0 || output);
-  const data = await outputTensor.data();
-  const shape = outputTensor.shape;
+    output = await model.executeAsync(batched);
+    outputTensor = Array.isArray(output)
+      ? output[0]
+      : (output?.output0 || output);
+    const data = await outputTensor.data();
+    const shape = outputTensor.shape;
 
-  tfImg.dispose();
-  resized.dispose();
-  normalized.dispose();
-  batched.dispose();
-  if (Array.isArray(output)) output.forEach(t => t.dispose());
-  else if (output && typeof output === 'object' && output !== outputTensor) {
-    Object.values(output).forEach(t => t.dispose?.());
-  } else {
-    outputTensor.dispose();
+    const frame = { width: video.videoWidth || 640, height: video.videoHeight || 480 };
+    return decodeYoloOutput(data, shape, frame);
+  } finally {
+    tensors.forEach(t => t.dispose());
+    if (Array.isArray(output)) output.forEach(t => t.dispose());
+    else if (output && typeof output === 'object' && output !== outputTensor) {
+      Object.values(output).forEach(t => t.dispose?.());
+    } else {
+      outputTensor?.dispose();
+    }
   }
-
-  const frame = { width: video.videoWidth || 640, height: video.videoHeight || 480 };
-  return decodeYoloOutput(data, shape, frame);
 }
 
 function decodeYoloOutput(output, shape, frame) {
   if (!shape || shape.length < 3) return [];
   const [_, dim1, dim2] = shape;
-  const features = 5 + COCO_LABELS.length;
-  const transposed = dim1 === features;
+  const featuresNoObj = 4 + COCO_LABELS.length;
+  const featuresWithObj = 5 + COCO_LABELS.length;
+  const transposed = dim1 === featuresNoObj || dim1 === featuresWithObj;
+  const features = transposed ? dim1 : dim2;
   const numBoxes = transposed ? dim2 : dim1;
   if (transposed && dim2 <= 0) return [];
-  if (!transposed && dim2 !== features) return [];
+  if (![featuresNoObj, featuresWithObj].includes(features)) return [];
+
+  const hasObj = features === featuresWithObj;
+  const classOffset = hasObj ? 5 : 4;
 
   const getVal = (i, f) => (transposed ? output[f * numBoxes + i] : output[i * features + f]);
 
@@ -161,13 +171,13 @@ function decodeYoloOutput(output, shape, frame) {
     const cy = getVal(i, 1);
     const w = getVal(i, 2);
     const h = getVal(i, 3);
-    const obj = getVal(i, 4);
+    const obj = hasObj ? getVal(i, 4) : 1;
     maxCoord = Math.max(maxCoord, cx, cy, w, h);
 
     let bestScore = 0;
     let bestClass = 0;
     for (let c = 0; c < COCO_LABELS.length; c++) {
-      const cls = getVal(i, 5 + c);
+      const cls = getVal(i, classOffset + c);
       const score = obj * cls;
       if (score > bestScore) {
         bestScore = score;
@@ -223,42 +233,40 @@ function iou(a, b) {
   return union <= 0 ? 0 : inter / union;
 }
 
-// gemini api (VITE_GEMINI_API_KEY)
+// openrouter call, still using VITE_GEMINI_API_KEY
 
 async function callGeminiJson(imageBase64, prompt) {
   const key = import.meta.env.VITE_GEMINI_API_KEY;
   if (!key || !imageBase64) return null;
 
-  const base64Data = imageBase64.replace(/^data:image\/[a-z]+;base64,/, '');
-
   try {
-    const res = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${key}`,
-      {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({
-          contents: [{
-            parts: [
-              {
-                inline_data: {
-                  mime_type: 'image/jpeg',
-                  data: base64Data,
-                },
-              },
-              { text: prompt },
+    const res = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${key}`,
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({
+        model: GEMINI_MODEL,
+        temperature: 0,
+        max_tokens: 128,
+        messages: [
+          {
+            role: 'user',
+            content: [
+              { type: 'text', text: prompt },
+              { type: 'image_url', image_url: { url: imageBase64 } },
             ],
-          }],
-          generationConfig: {
-            temperature: 0,
-            maxOutputTokens: 128,
           },
-        }),
-      }
-    );
+        ],
+      }),
+    });
 
     const data = await res.json();
-    const text = data.candidates?.[0]?.content?.parts?.[0]?.text || '';
+    let text = data.choices?.[0]?.message?.content || '';
+    if (Array.isArray(text)) {
+      text = text.map(part => part?.text || '').join('');
+    }
 
     const s = text.indexOf('{'), e = text.lastIndexOf('}') + 1;
     if (s < 0 || e <= s) return null;
@@ -302,13 +310,16 @@ Requirements:
     confidence: parsed.confidence || 0.8,
   };
 }
-// app
+// ok here is the app core
 function App() {
   const videoRef          = useRef(null);
   const canvasRef         = useRef(null);
   const modelRef          = useRef(null);
   const streamRef         = useRef(null);
   const loopRef           = useRef(null);
+  const startInFlightRef  = useRef(false);
+  const detectingRef      = useRef(false);
+  const pauseDetectRef    = useRef(false);
   const lastLightRunRef   = useRef(0);
   const lastHeavyRunRef   = useRef(0);
   const lastPredsRef      = useRef([]);
@@ -317,9 +328,9 @@ function App() {
   const prevAreaRef       = useRef(0);
   const foundOnceRef      = useRef(false);
   const noFindFramesRef   = useRef(0);
-  const aiBoxRef          = useRef(null); // last ai bbox {x,y,w,h,confidence}
+  const aiBoxRef          = useRef(null); // last ai bbox, rough coords + confidence
   const aiInFlightRef     = useRef(false);
-  const localTargetRef    = useRef(null); // {label, score, source} map
+  const localTargetRef    = useRef(null); // {label, score, source} map-ish
   const targetRef         = useRef('');  // always-current target for the detect loop
 
   const [target,        setTargetState]   = useState('');
@@ -332,7 +343,7 @@ function App() {
   const [hapticsOk,     setHapticsOk]     = useState(true);
   const [isListening,   setIsListening]   = useState(false);
   const [aiLabel,       setAiLabel]       = useState(''); // 'scanning' | 'found' | ''
-  const [mode,          setMode]          = useState('normal'); // 'normal' | 'autopilot' | 'sos'
+  const [mode,          setMode]          = useState('normal'); // 'normal' | 'autopilot'
   const [autoCands,     setAutoCands]     = useState([]);
   const [autoIdx,       setAutoIdx]       = useState(0);
 
@@ -341,7 +352,7 @@ function App() {
     return () => stopScanner();
   }, []);
 
-  // keep targetRef in sync w/ the loop
+  // keep targetRef synced with the loop, no drama
   function setTarget(t) {
     targetRef.current = t;
     setTargetState(t);
@@ -367,6 +378,12 @@ function App() {
     if (!isRunning) startScanner(); else setStatus('looking');
   }
 
+  function handleScanClick() {
+    if (isRunning) { stopScanner(); return; }
+    if (draftTarget.trim()) { submitTypedTarget(); return; }
+    startScanner();
+  }
+
   function handleTypedKeyDown(e) {
     if (e.key === 'Enter') {
       e.preventDefault();
@@ -387,7 +404,7 @@ function App() {
     }
   }
 
-  // voice input
+  // voice input stuff, kinda picky
 
   function startListening() {
     const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
@@ -425,12 +442,7 @@ function App() {
   async function handleVoice(text) {
     const lower = text.toLowerCase();
 
-    // emergeny words
-    if (/\b(sos|emergency|help|exit|danger|fire|lost)\b/i.test(lower)) {
-      triggerSOS(); return;
-    }
-
-    // vague intent → autopilot
+    // vague intent -> autopilot
     const isVague =
       /\b(something|anything)\b/i.test(lower) ||
       /\b(eat|food|hungry|snack|drink|thirsty)\b/i.test(lower) ||
@@ -441,7 +453,7 @@ function App() {
       runAutopilot(text); return;
     }
 
-    // direct target — strip filler words
+    // direct target, strip the fluff
     const extracted = lower
       .replace(/where\s+is\s+(my\s+|the\s+)?/g, '')
       .replace(/find\s+(my\s+|the\s+|a\s+)?/g, '')
@@ -457,34 +469,38 @@ function App() {
     }
   }
 
-  // autopilot
+  // autopilot mode, let the model pick
   async function runAutopilot(intent) {
     setMode('autopilot');
     setStatus('thinking…');
     setAiLabel('scanning');
+    pauseDetectRef.current = true;
     if (!streamRef.current) await startScanner();
-
-    const frame = captureJpeg(videoRef.current);
-    const result = await callGeminiJson(frame,
-      `User said: "${intent}"
+    try {
+      const frame = captureJpeg(videoRef.current);
+      const result = await callGeminiJson(frame,
+        `User said: "${intent}"
 Look at this image. Identify 2–4 real visible objects that best match the user's intent, ranked by how obvious/accessible they are.
 CRITICAL: Only list objects that are clearly visible as distinct items — NOT walls, floors, tables, or surfaces themselves. Only things ON surfaces or in the scene as separate objects.
 Return JSON: {"candidates":["item1","item2"],"positions":["short position like 'center table'","short position"]}
 If nothing matches, return {"candidates":[],"positions":[]}`
-    );
+      );
 
-    setAiLabel('');
-    if (result?.candidates?.length > 0) {
-      setAutoCands(result.candidates);
-      setAutoIdx(0);
-      setTarget(result.candidates[0]);
-      setStatus('looking');
-      vibe('confirm', true);
-      if (!isRunning) startScanner();
-    } else {
-      setMode('normal');
-      setError('Nothing found for that. Try being more specific.');
-      setStatus('ready');
+      if (result?.candidates?.length > 0) {
+        setAutoCands(result.candidates);
+        setAutoIdx(0);
+        setTarget(result.candidates[0]);
+        setStatus('looking');
+        vibe('confirm', true);
+        if (!isRunning) startScanner();
+      } else {
+        setMode('normal');
+        setError('Nothing found for that. Try being more specific.');
+        setStatus('ready');
+      }
+    } finally {
+      pauseDetectRef.current = false;
+      setAiLabel('');
     }
   }
 
@@ -496,45 +512,10 @@ If nothing matches, return {"candidates":[],"positions":[]}`
     vibe('confirm', true);
   }
 
-  // sos
-  async function triggerSOS() {
-    setMode('sos');
-    setStatus('🆘 SOS — locating exit');
-    vibe('sos', true);
-    setAiLabel('scanning');
-    if (!streamRef.current) await startScanner();
-
-    const frame = captureJpeg(videoRef.current);
-    const result = await callGeminiJson(frame,
-      `EMERGENCY: Find the fastest path to safety — a door, hallway, open space, or exit.
-Ignore everything except exits and large open paths.
-Return JSON: {
-  "direction": "left or right or forward or backward",
-  "description": "one short spoken instruction max 10 words",
-  "obstacle": "obstacle name or null"
-}
-If no exit visible: {"direction":"forward","description":"Follow the wall to your right","obstacle":null}`
-    );
-
-    setAiLabel('');
-    if (result) {
-      const sig = result.direction === 'left' ? 'left' : result.direction === 'right' ? 'right' : 'locked';
-      setSignal(sig);
-      setStatus(result.description || 'Move to nearest open space');
-      setMatch({
-        name: '🆘 EXIT',
-        direction: result.direction,
-        distance: result.obstacle ? `⚠ avoid ${result.obstacle}` : 'keep moving',
-      });
-    }
-  }
-
-  function cancelSOS() {
-    setMode('normal'); setStatus('ready'); setSignal('looking'); setMatch(null);
-  }
-
-  // camera + detect
+  // camera + detect loop
   async function startScanner() {
+    if (isRunning || startInFlightRef.current) return;
+    startInFlightRef.current = true;
     setError('');
     setStatus('camera');
     setMatch(null);
@@ -567,6 +548,8 @@ If no exit visible: {"direction":"forward","description":"Follow the wall to you
     } catch (err) {
       setStatus('blocked');
       setError(err?.message || 'Camera blocked — allow camera access');
+    } finally {
+      startInFlightRef.current = false;
     }
   }
 
@@ -576,110 +559,120 @@ If no exit visible: {"direction":"forward","description":"Follow the wall to you
     navigator.vibrate?.(0);
     streamRef.current?.getTracks().forEach(t => t.stop());
     streamRef.current = null;
+    pauseDetectRef.current = false;
+    detectingRef.current = false;
     setIsRunning(false);
     setStatus('ready');
     aiBoxRef.current = null;
   }
 
   async function detect() {
-    const video = videoRef.current;
-    const model = modelRef.current;
-
-    if (!video || !model || video.readyState < 2) {
-      loopRef.current = requestAnimationFrame(detect); return;
+    if (detectingRef.current) {
+      if (streamRef.current) loopRef.current = requestAnimationFrame(detect);
+      return;
     }
 
-    const tgt = targetRef.current;
-    if (tgt && !localTargetRef.current) {
-      void resolveLocalTarget(tgt);
+    detectingRef.current = true;
+    try {
+      const video = videoRef.current;
+      const model = modelRef.current;
+
+      if (!video || !model || video.readyState < 2) return;
+      if (pauseDetectRef.current) return;
+
+      const tgt = targetRef.current;
+      if (tgt && !localTargetRef.current) {
+        void resolveLocalTarget(tgt);
+      }
+
+      const frame = { width: video.videoWidth || 640, height: video.videoHeight || 480 };
+      const now = performance.now();
+
+      const lightInterval = 1000 / LIGHT_FPS;
+      const heavyInterval = HEAVY_COOLDOWN_MS;
+      const ranLight = now - lastLightRunRef.current >= lightInterval;
+
+      let predictions = lastPredsRef.current;
+      if (ranLight) {
+        lastLightRunRef.current = now;
+        predictions = await runYolo(video, model);
+        lastPredsRef.current = predictions;
+      }
+
+      const directLabel = resolveCocoTarget(tgt);
+      const localInfo = localTargetRef.current;
+      const mappedLabel = localInfo?.label || directLabel;
+      const cocoMatchRaw = mappedLabel ? findTarget(predictions, mappedLabel, frame, true) : null;
+      const cocoMatch = cocoMatchRaw ? {
+        ...cocoMatchRaw,
+        displayClass: mappedLabel !== tgt ? tgt : cocoMatchRaw.class,
+        source: cocoMatchRaw,
+      } : null;
+
+      const localCanFind = Boolean(mappedLabel);
+      const needsAi = tgt && !cocoMatch && (!localCanFind || noFindFramesRef.current > NO_FIND_FRAMES);
+      const shouldRunHeavy = needsAi && (now - lastHeavyRunRef.current >= heavyInterval);
+
+      if (shouldRunHeavy && !aiInFlightRef.current) {
+        lastHeavyRunRef.current = now;
+        aiInFlightRef.current = true;
+        setAiLabel('scanning');
+        const img = captureJpeg(video);
+        callGeminiBox(img, tgt)
+          .then(r => {
+            if (r?.found && r.x != null) {
+              aiBoxRef.current = r;
+              setAiLabel('found');
+              setTimeout(() => setAiLabel(''), 900);
+            } else {
+              aiBoxRef.current = null;
+              setAiLabel('');
+            }
+          })
+          .catch(() => setAiLabel(''))
+          .finally(() => { aiInFlightRef.current = false; });
+      }
+
+      let effectiveMatch = cocoMatch;
+      if (!cocoMatch && aiBoxRef.current?.found) {
+        const cb = aiBoxRef.current;
+        effectiveMatch = {
+          class: tgt,
+          displayClass: tgt,
+          score: cb.confidence || 0.8,
+          bbox: [cb.x * frame.width, cb.y * frame.height, cb.w * frame.width, cb.h * frame.height],
+          fromAi: true,
+        };
+      }
+
+      draw(predictions, effectiveMatch);
+
+      if (!effectiveMatch) {
+        if (ranLight) noFindFramesRef.current++;
+        setMatch(null);
+        if (tgt) { setStatus('looking'); setSignal('looking'); vibe('looking'); }
+        prevAreaRef.current = 0;
+      } else {
+        if (ranLight) noFindFramesRef.current = 0;
+        const g = getGuidance(effectiveMatch, frame, prevAreaRef.current);
+        prevAreaRef.current = g.area;
+        setMatch({
+          name: effectiveMatch.isCandidate ? tgt : (effectiveMatch.displayClass || effectiveMatch.class),
+          score: effectiveMatch.score,
+          direction: g.direction,
+          distance: g.distance,
+          fromAi: effectiveMatch.fromAi,
+        });
+        setStatus(g.status);
+        setSignal(g.signal);
+
+        if (!foundOnceRef.current) { foundOnceRef.current = true; vibe('found', true); }
+        else vibe(g.signal);
+      }
+    } finally {
+      detectingRef.current = false;
+      if (streamRef.current) loopRef.current = requestAnimationFrame(detect);
     }
-
-    const frame = { width: video.videoWidth || 640, height: video.videoHeight || 480 };
-    const now = performance.now();
-
-    const lightInterval = 1000 / LIGHT_FPS;
-    const heavyInterval = HEAVY_COOLDOWN_MS;
-    const ranLight = now - lastLightRunRef.current >= lightInterval;
-
-    let predictions = lastPredsRef.current;
-    if (ranLight) {
-      lastLightRunRef.current = now;
-      predictions = await runYolo(video, model);
-      lastPredsRef.current = predictions;
-    }
-
-    const directLabel = resolveCocoTarget(tgt);
-    const localInfo = localTargetRef.current;
-    const mappedLabel = localInfo?.label || directLabel;
-    const cocoMatchRaw = mappedLabel ? findTarget(predictions, mappedLabel, frame, true) : null;
-    const cocoMatch = cocoMatchRaw ? {
-      ...cocoMatchRaw,
-      displayClass: mappedLabel !== tgt ? tgt : cocoMatchRaw.class,
-      source: cocoMatchRaw,
-    } : null;
-
-    const localCanFind = Boolean(mappedLabel);
-    const needsAi = tgt && !cocoMatch && (!localCanFind || noFindFramesRef.current > NO_FIND_FRAMES);
-    const shouldRunHeavy = needsAi && (now - lastHeavyRunRef.current >= heavyInterval);
-
-    if (shouldRunHeavy && !aiInFlightRef.current) {
-      lastHeavyRunRef.current = now;
-      aiInFlightRef.current = true;
-      setAiLabel('scanning');
-      const img = captureJpeg(video);
-      callGeminiBox(img, tgt)
-        .then(r => {
-          if (r?.found && r.x != null) {
-            aiBoxRef.current = r;
-            setAiLabel('found');
-            setTimeout(() => setAiLabel(''), 900);
-          } else {
-            aiBoxRef.current = null;
-            setAiLabel('');
-          }
-        })
-        .catch(() => setAiLabel(''))
-        .finally(() => { aiInFlightRef.current = false; });
-    }
-
-    let effectiveMatch = cocoMatch;
-    if (!cocoMatch && aiBoxRef.current?.found) {
-      const cb = aiBoxRef.current;
-      effectiveMatch = {
-        class: tgt,
-        displayClass: tgt,
-        score: cb.confidence || 0.8,
-        bbox: [cb.x * frame.width, cb.y * frame.height, cb.w * frame.width, cb.h * frame.height],
-        fromAi: true,
-      };
-    }
-
-    draw(predictions, effectiveMatch);
-
-    if (!effectiveMatch) {
-      if (ranLight) noFindFramesRef.current++;
-      setMatch(null);
-      if (tgt) { setStatus('looking'); setSignal('looking'); vibe('looking'); }
-      prevAreaRef.current = 0;
-    } else {
-      if (ranLight) noFindFramesRef.current = 0;
-      const g = getGuidance(effectiveMatch, frame, prevAreaRef.current);
-      prevAreaRef.current = g.area;
-      setMatch({
-        name: effectiveMatch.isCandidate ? tgt : (effectiveMatch.displayClass || effectiveMatch.class),
-        score: effectiveMatch.score,
-        direction: g.direction,
-        distance: g.distance,
-        fromAi: effectiveMatch.fromAi,
-      });
-      setStatus(g.status);
-      setSignal(g.signal);
-
-      if (!foundOnceRef.current) { foundOnceRef.current = true; vibe('found', true); }
-      else vibe(g.signal);
-    }
-
-    loopRef.current = requestAnimationFrame(detect);
   }
 
   function resolveCocoTarget(tgt) {
@@ -697,14 +690,22 @@ If no exit visible: {"direction":"forward","description":"Follow the wall to you
     if (!canvas || !video) return;
 
     const W = video.videoWidth || 640, H = video.videoHeight || 480;
-    canvas.width = W; canvas.height = H;
+    const displayW = canvas.clientWidth || W;
+    const displayH = canvas.clientHeight || H;
+    canvas.width = displayW;
+    canvas.height = displayH;
     const ctx = canvas.getContext('2d');
-    ctx.clearRect(0, 0, W, H);
+    ctx.clearRect(0, 0, displayW, displayH);
 
-    // non-target preds, dimmed a bit
+    const scale = Math.max(displayW / W, displayH / H);
+    const offsetX = (W * scale - displayW) / 2;
+    const offsetY = (H * scale - displayH) / 2;
+    const mapBox = ([x, y, w, h]) => [x * scale - offsetX, y * scale - offsetY, w * scale, h * scale];
+
+    // non-target preds, a little faded
     predictions.forEach(p => {
       if (targetMatch?.source === p) return;
-      const [x, y, w, h] = p.bbox;
+      const [x, y, w, h] = mapBox(p.bbox);
       ctx.strokeStyle = 'rgba(255,255,255,0.28)';
       ctx.lineWidth = 1.5;
       ctx.setLineDash([]);
@@ -713,7 +714,7 @@ If no exit visible: {"direction":"forward","description":"Follow the wall to you
 
     if (!targetMatch) return;
 
-    const [x, y, bw, bh] = targetMatch.bbox;
+    const [x, y, bw, bh] = mapBox(targetMatch.bbox);
     ctx.setLineDash(targetMatch.fromAi ? [12, 6] : []);
     ctx.strokeStyle = '#00ff9d';
     ctx.lineWidth   = targetMatch.fromAi ? 5 : 8;
@@ -741,11 +742,11 @@ If no exit visible: {"direction":"forward","description":"Follow the wall to you
   }
 
   return (
-    <main className={`scanner signal-${signal}${mode === 'sos' ? ' sos-mode' : ''}`}>
+    <main className={`scanner signal-${signal}`}>
       <video ref={videoRef} playsInline muted />
       <canvas ref={canvasRef} />
 
-      {!isRunning && mode !== 'sos' && (
+      {!isRunning && (
         <button className="start-button" type="button" onClick={startScanner}>
           <Camera size={30} />
           Start
@@ -768,24 +769,14 @@ If no exit visible: {"direction":"forward","description":"Follow the wall to you
 
       <div className="reticle" aria-hidden="true"><span /></div>
 
-      {/* SOS btn, top right */}
-      {isRunning && mode !== 'sos' && (
-        <button className="sos-btn" onClick={triggerSOS} aria-label="Emergency SOS">
-          <AlertTriangle size={16} />SOS
-        </button>
-      )}
-      {mode === 'sos' && (
-        <button className="cancel-sos-btn" onClick={cancelSOS}>✕ Cancel SOS</button>
-      )}
-
-      {/* autopilot next option */}
+      {/* autopilot next option, in case we have more */}
       {mode === 'autopilot' && autoCands.length > 1 && autoIdx < autoCands.length - 1 && (
         <button className="next-cand-btn" onClick={nextAutoCand}>
           Next option →
         </button>
       )}
 
-      {/* bottom bar  */}
+      {/* bottom bar, your main controls */}
       <div className="target-bar">
         <button
           className={`mic-btn${isListening ? ' mic-active' : ''}`}
@@ -812,21 +803,24 @@ If no exit visible: {"direction":"forward","description":"Follow the wall to you
             enterKeyHint="go"
             aria-label="Type a target"
           />
+          <button className="go-btn" type="button" onClick={submitTypedTarget} aria-label="Submit target">
+            Go
+          </button>
         </div>
 
         <button
           type="button"
           className="scan-btn"
-          onClick={isRunning ? stopScanner : startScanner}
-          aria-label={isRunning ? 'Stop' : 'Scan'}
+          onClick={handleScanClick}
+          aria-label={isRunning ? 'Stop' : 'Go and scan'}
         >
           {isRunning ? <Square size={18} /> : <ScanLine size={20} />}
         </button>
       </div>
 
-      {/* status strip */}
+      {/* status strip, keep it short */}
       <div className="signal-strip" aria-live="polite">
-        <strong>{mode === 'sos' ? '🆘 SOS' : status}</strong>
+        <strong>{status}</strong>
         <span>
           {match
             ? `${match.direction} · ${match.distance}${match.fromAi ? ' · ✦AI' : ''}`
@@ -838,7 +832,7 @@ If no exit visible: {"direction":"forward","description":"Follow the wall to you
   );
 }
 
-// camera helpers
+// camera helpers, widest lens if possible
 async function getWideCameraStream() {
   const base = {
     video: { facingMode: { ideal: 'environment' }, width: { ideal: 1920 }, height: { ideal: 1080 }, aspectRatio: { ideal: 16 / 9 } },
@@ -846,9 +840,11 @@ async function getWideCameraStream() {
   };
   const first = await navigator.mediaDevices.getUserMedia(base);
   const devices = await navigator.mediaDevices.enumerateDevices();
-  const wide = devices
-    .filter(d => d.kind === 'videoinput')
-    .find(d => /ultra|wide|back|rear|environment/i.test(d.label));
+  const cameras = devices.filter(d => d.kind === 'videoinput');
+  const backCams = cameras.filter(d => /back|rear|environment/i.test(d.label));
+  const wide = backCams.find(d => /ultra|wide/i.test(d.label))
+    || backCams[0]
+    || cameras.find(d => /ultra|wide/i.test(d.label));
   if (!wide) return first;
   first.getTracks().forEach(t => t.stop());
   return navigator.mediaDevices.getUserMedia({
@@ -861,7 +857,7 @@ async function setWidestZoom(stream) {
   const track = stream.getVideoTracks()[0];
   const caps  = track?.getCapabilities?.();
   if (!caps?.zoom) return;
-  try { await track.applyConstraints({ advanced: [{ zoom: caps.zoom.min }] }); } catch { /* ignore */ }
+  try { await track.applyConstraints({ advanced: [{ zoom: caps.zoom.min }] }); } catch { /* ok, ignore zoom */ }
 }
 
 function captureJpeg(video) {
@@ -874,7 +870,7 @@ function captureJpeg(video) {
   return canvas.toDataURL('image/jpeg', 0.82);
 }
 
-// detect helpers
+// detect helpers, this is the guidance math
 function findTarget(predictions, target, frame, allowCandidate = true) {
   const aliases = getAliases(target);
   const exact   = predictions

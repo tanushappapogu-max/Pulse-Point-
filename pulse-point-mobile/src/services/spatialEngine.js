@@ -51,20 +51,28 @@ export const guidanceStages = {
 };
 
 export function createDetectionResult(targetName) {
+  const cleanName = (targetName || '').trim();
+  const width = 0.18 + Math.random() * 0.16;
+  const height = 0.14 + Math.random() * 0.18;
+  const x = 0.06 + Math.random() * (0.94 - width);
+  const y = 0.08 + Math.random() * (0.88 - height);
+  const centerX = x + width / 2;
+  const centerY = y + height / 2;
+
   return {
-    id: `${targetName.toLowerCase().replace(/\s+/g, '-')}-${Date.now()}`,
-    name: targetName.trim() || 'target object',
-    confidence: 0.82,
+    id: `${(cleanName || 'target').toLowerCase().replace(/\s+/g, '-')}-${Date.now()}`,
+    name: cleanName || 'target object',
+    confidence: 0.72 + Math.random() * 0.22,
     position: {
-      x: 0.72,
-      y: 0.38,
-      zMeters: 2.6
+      x: centerX,
+      y: centerY,
+      zMeters: 0.8 + Math.random() * 2.2
     },
     boundingBox: {
-      x: 0.62,
-      y: 0.28,
-      width: 0.24,
-      height: 0.18
+      x,
+      y,
+      width,
+      height
     }
   };
 }

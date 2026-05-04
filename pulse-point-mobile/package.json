@@ -20,8 +20,7 @@
     "react": "19.0.0",
     "react-native": "0.79.6",
     "react-native-safe-area-context": "5.4.0",
-    "react-native-svg": "15.11.2",
-    "undefined": ".npm-cache"
+    "react-native-svg": "15.11.2"
   },
   "devDependencies": {
     "@babel/core": "^7.25.2",
