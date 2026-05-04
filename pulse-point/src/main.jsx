@@ -39,6 +39,8 @@ const TARGET_ALIASES = {
   ship: ['boat'],
 };
 
+// L4 fix: removed dead 'sos' pattern since SOS was ripped out
+// these are the only haptic signals we actually use
 const HAPTIC = {
   looking: [24, 260],
   found:   [170, 80, 170, 80, 260],
@@ -48,7 +50,6 @@ const HAPTIC = {
   locked:  [260],
   reach:   [360, 80, 360],
   lost:    [35, 120, 35],
-  sos:     [500, 100, 500, 100, 500],
   confirm: [200, 80, 200],
 };
 
@@ -263,6 +264,14 @@ async function callGeminiJson(imageBase64, prompt) {
     });
 
     const data = await res.json();
+
+    // B3 fix: openrouter sends back data.error on rate limit, bad key, etc.
+    // used to just silently return null and the user would see 'AI scanning...' forever
+    if (data.error) {
+      console.warn('OpenRouter error:', data.error?.message || data.error);
+      return { __error: data.error?.message || 'AI unavailable' };
+    }
+
     let text = data.choices?.[0]?.message?.content || '';
     if (Array.isArray(text)) {
       text = text.map(part => part?.text || '').join('');
@@ -333,6 +342,13 @@ function App() {
   const localTargetRef    = useRef(null); // {label, score, source} map-ish
   const targetRef         = useRef('');  // always-current target for the detect loop
 
+  // B2 fix: isRunning as a ref too so closures don't go stale
+  // React state is great for rendering but closures capture old values — ref always current
+  const isRunningRef      = useRef(false);
+
+  // M1: detect voice support once at init, don't check it every render
+  const canVoice = Boolean(window.SpeechRecognition || window.webkitSpeechRecognition);
+
   const [target,        setTargetState]   = useState('');
   const [draftTarget,   setDraftTarget]   = useState('');
   const [status,        setStatus]        = useState('ready');
@@ -375,11 +391,13 @@ function App() {
     setError('');
     setTarget(text);
     setMode('normal');
-    if (!isRunning) startScanner(); else setStatus('looking');
+    // B2 fix: use the ref, not the state — closures capture old state values
+    if (!isRunningRef.current) startScanner(); else setStatus('looking');
   }
 
   function handleScanClick() {
-    if (isRunning) { stopScanner(); return; }
+    // B2 fix: same deal, ref not state
+    if (isRunningRef.current) { stopScanner(); return; }
     if (draftTarget.trim()) { submitTypedTarget(); return; }
     startScanner();
   }
@@ -465,7 +483,8 @@ function App() {
     if (extracted) {
       setTarget(extracted);
       setMode('normal');
-      if (!isRunning) startScanner(); else setStatus('looking');
+      // B2 fix: ref is always current, state might be stale in this callback
+      if (!isRunningRef.current) startScanner(); else setStatus('looking');
     }
   }
 
@@ -486,13 +505,19 @@ Return JSON: {"candidates":["item1","item2"],"positions":["short position like '
 If nothing matches, return {"candidates":[],"positions":[]}`
       );
 
-      if (result?.candidates?.length > 0) {
+      // B3 fix: check if the result itself is an error signal from openrouter
+      if (result?.__error) {
+        setMode('normal');
+        setError(`AI error: ${result.__error}`);
+        setStatus('ready');
+      } else if (result?.candidates?.length > 0) {
         setAutoCands(result.candidates);
         setAutoIdx(0);
         setTarget(result.candidates[0]);
         setStatus('looking');
         vibe('confirm', true);
-        if (!isRunning) startScanner();
+        // B2 fix: ref not state
+        if (!isRunningRef.current) startScanner();
       } else {
         setMode('normal');
         setError('Nothing found for that. Try being more specific.');
@@ -501,6 +526,9 @@ If nothing matches, return {"candidates":[],"positions":[]}`
     } finally {
       pauseDetectRef.current = false;
       setAiLabel('');
+      // B1 fix: restart the detect loop now that autopilot pause is lifted
+      // without this the loop just... dies quietly
+      if (streamRef.current && !loopRef.current) detect();
     }
   }
 
@@ -536,6 +564,7 @@ If nothing matches, return {"candidates":[],"positions":[]}`
       await videoRef.current.play();
       await setWidestZoom(stream);
 
+      isRunningRef.current = true;
       setIsRunning(true);
       setStatus('loading');
       vibe('looking', true);
@@ -561,6 +590,7 @@ If nothing matches, return {"candidates":[],"positions":[]}`
     streamRef.current = null;
     pauseDetectRef.current = false;
     detectingRef.current = false;
+    isRunningRef.current = false;
     setIsRunning(false);
     setStatus('ready');
     aiBoxRef.current = null;
@@ -620,6 +650,8 @@ If nothing matches, return {"candidates":[],"positions":[]}`
         const img = captureJpeg(video);
         callGeminiBox(img, tgt)
           .then(r => {
+            // B3 fix: callGeminiBox returns null on failure, but callGeminiJson
+            // now returns {__error} on openrouter API errors
             if (r?.found && r.x != null) {
               aiBoxRef.current = r;
               setAiLabel('found');
@@ -671,7 +703,11 @@ If nothing matches, return {"candidates":[],"positions":[]}`
       }
     } finally {
       detectingRef.current = false;
-      if (streamRef.current) loopRef.current = requestAnimationFrame(detect);
+      // B1 fix: don't reschedule while autopilot has paused us
+      // before this we were burning 60fps of RAF calls that all just early-returned immediately
+      if (streamRef.current && !pauseDetectRef.current) {
+        loopRef.current = requestAnimationFrame(detect);
+      }
     }
   }
 
@@ -778,11 +814,14 @@ If nothing matches, return {"candidates":[],"positions":[]}`
 
       {/* bottom bar, your main controls */}
       <div className="target-bar">
+        {/* M1 fix: on iOS (Safari) SpeechRecognition flat out doesn't exist
+            show the button still but disabled + dim it so user knows why */}
         <button
-          className={`mic-btn${isListening ? ' mic-active' : ''}`}
+          className={`mic-btn${isListening ? ' mic-active' : ''}${!canVoice ? ' mic-disabled' : ''}`}
           type="button"
           onClick={startListening}
-          aria-label={isListening ? 'Listening…' : 'Tap to speak'}
+          aria-label={isListening ? 'Listening…' : canVoice ? 'Tap to speak' : 'Voice not supported — type instead'}
+          disabled={!canVoice}
         >
           <Mic size={22} />
         </button>
@@ -825,7 +864,8 @@ If nothing matches, return {"candidates":[],"positions":[]}`
           {match
             ? `${match.direction} · ${match.distance}${match.fromAi ? ' · ✦AI' : ''}`
             : aiLabel === 'scanning' ? 'AI scanning…'
-            : hapticsOk ? 'scan slowly' : 'haptics unavailable'}
+            // M1 fix: 'haptics unavailable' sounds broken. 'visual guidance' sounds intentional
+            : hapticsOk ? 'scan slowly' : 'visual guidance mode'}
         </span>
       </div>
     </main>

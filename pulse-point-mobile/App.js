@@ -151,7 +151,9 @@ function AppContent() {
   return (
     <View style={styles.app}>
       <StatusBar style="light" />
-      <CameraView style={styles.camera} facing="back" autoFocus="on" />
+      {/* autofocus: lowercase is correct for expo-camera v16 CameraView
+          (M4 fix — autoFocus was wrong casing) */}
+      <CameraView style={styles.camera} facing="back" autofocus="on" />
       <View style={styles.cameraShade} />
 
       <SafeAreaView style={styles.overlay}>
@@ -178,7 +180,15 @@ function AppContent() {
             returnKeyType="search"
             onSubmitEditing={startScan}
           />
-          <Pressable style={styles.scanButton} onPress={startScan}>
+          <Pressable
+            style={[
+              styles.scanButton,
+              // B7 fix: greyed out when target is empty, looks weird to scan for nothing
+              !target.trim() && { opacity: 0.38 }
+            ]}
+            onPress={target.trim() ? startScan : null}
+            disabled={!target.trim()}
+          >
             <Ionicons name="scan" size={19} color="#ffffff" />
           </Pressable>
         </View>
@@ -249,7 +259,15 @@ function AppContent() {
             <Pressable style={styles.secondaryButton} onPress={() => setStageKey('idle')}>
               <Text style={styles.secondaryButtonText}>Reset</Text>
             </Pressable>
-            <Pressable style={styles.primaryButtonSmall} onPress={stageKey === 'idle' ? startScan : nextStage}>
+            <Pressable
+              style={[
+                styles.primaryButtonSmall,
+                // B7 fix: also grey out the main action button at idle when no target
+                stageKey === 'idle' && !target.trim() && { opacity: 0.38 }
+              ]}
+              onPress={stageKey === 'idle' ? (target.trim() ? startScan : null) : nextStage}
+              disabled={stageKey === 'idle' && !target.trim()}
+            >
               <Text style={styles.primaryButtonText}>
                 {stageKey === 'idle' ? 'Start scan' : stageKey === 'complete' ? 'Done' : 'Continue'}
               </Text>

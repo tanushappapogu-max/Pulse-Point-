@@ -153,6 +153,14 @@ input {
   animation: mic-pulse 0.75s ease-in-out infinite;
 }
 
+/* M1 fix: iOS safari has no SpeechRecognition at all
+   dim it instead of hiding so user understands the layout */
+.mic-btn.mic-disabled {
+  opacity: 0.32;
+  pointer-events: none;
+  cursor: not-allowed;
+}
+
 @keyframes mic-pulse {
   0%, 100% { box-shadow: 0 0 0 0 rgba(0, 255, 157, 0.55); }
   50%       { box-shadow: 0 0 0 10px rgba(0, 255, 157, 0); }
