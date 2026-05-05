@@ -5,8 +5,10 @@ import { Camera, Loader2, ScanLine, Square, Mic } from 'lucide-react';
 import './styles.css';
 
 const YOLO_INPUT = 640;
-const LIGHT_FPS = 10;
+const LIGHT_FPS = 15;
 const HEAVY_COOLDOWN_MS = 2500; // ai cooldown, keep it chill
+const BOX_SMOOTH_ALPHA = 0.55; // 0.55 of new box, 0.45 of prev — kills jitter without lag
+const BOX_SMOOTH_SNAP_IOU = 0.3; // if new box barely overlaps the smoothed one, snap instead of blend
 const NO_FIND_SECONDS = 3;
 const NO_FIND_FRAMES = Math.round(LIGHT_FPS * NO_FIND_SECONDS);
 const GEMINI_MODEL = 'google/gemini-2.0-flash-lite-preview-02-05:free';
@@ -341,6 +343,7 @@ function App() {
   const aiInFlightRef     = useRef(false);
   const localTargetRef    = useRef(null); // {label, score, source} map-ish
   const targetRef         = useRef('');  // always-current target for the detect loop
+  const smoothedBoxRef    = useRef(null); // EMA-smoothed bbox so guidance arrows don't twitch
 
   // B2 fix: isRunning as a ref too so closures don't go stale
   // React state is great for rendering but closures capture old values — ref always current
@@ -381,6 +384,7 @@ function App() {
     aiBoxRef.current  = null;
     aiInFlightRef.current = false;
     localTargetRef.current = null;
+    smoothedBoxRef.current = null;
     setAiLabel('');
     resolveLocalTarget(t);
   }
@@ -556,6 +560,7 @@ If nothing matches, return {"candidates":[],"positions":[]}`
     lastPredsRef.current    = [];
     aiBoxRef.current        = null;
     aiInFlightRef.current   = false;
+    smoothedBoxRef.current  = null;
 
     try {
       const stream = await getWideCameraStream();
@@ -594,6 +599,7 @@ If nothing matches, return {"candidates":[],"positions":[]}`
     setIsRunning(false);
     setStatus('ready');
     aiBoxRef.current = null;
+    smoothedBoxRef.current = null;
   }
 
   async function detect() {
@@ -675,6 +681,29 @@ If nothing matches, return {"candidates":[],"positions":[]}`
           bbox: [cb.x * frame.width, cb.y * frame.height, cb.w * frame.width, cb.h * frame.height],
           fromAi: true,
         };
+      }
+
+      // EMA smoothing on the tracked box — kills frame-to-frame jitter so guidance is steady.
+      // Snap (no blend) when the new detection barely overlaps the smoothed one — that means
+      // the target moved a lot, the user re-aimed, or detection re-acquired after a miss.
+      if (effectiveMatch) {
+        const raw = effectiveMatch.bbox;
+        const prev = smoothedBoxRef.current;
+        if (!prev) {
+          smoothedBoxRef.current = [...raw];
+        } else {
+          const overlap = iou(prev, raw);
+          const a = overlap < BOX_SMOOTH_SNAP_IOU ? 1 : BOX_SMOOTH_ALPHA;
+          smoothedBoxRef.current = [
+            a * raw[0] + (1 - a) * prev[0],
+            a * raw[1] + (1 - a) * prev[1],
+            a * raw[2] + (1 - a) * prev[2],
+            a * raw[3] + (1 - a) * prev[3],
+          ];
+        }
+        effectiveMatch = { ...effectiveMatch, bbox: [...smoothedBoxRef.current] };
+      } else {
+        smoothedBoxRef.current = null;
       }
 
       draw(predictions, effectiveMatch);
@@ -932,7 +961,7 @@ function getGuidance(prediction, frame, prevArea) {
   const dist = estimateDistance(area);
   const centered    = cx > 0.42 && cx < 0.58;
   const close       = area > 0.2;
-  const gettingNear = prevArea > 0 && area > prevArea * 1.08;
+  const gettingNear = prevArea > 0 && area > prevArea * 1.05;
 
   if (centered && close) return { signal: 'reach',  status: 'reach',  direction: 'center',     distance: dist, area };
   if (centered)          return { signal: gettingNear ? 'closer' : 'locked', status: gettingNear ? 'closer' : 'locked', direction: 'center', distance: dist, area };
@@ -950,7 +979,7 @@ function findCenterCandidate(predictions, frame) {
       const area = (w * h) / (frame.width * frame.height);
       return { ...p, score: p.score * 0.72, centerScore: p.score + area * 1.6 - nd * 1.4, isCandidate: true };
     })
-    .filter(p => p.centerScore > 0.12 && p.score > 0.14)
+    .filter(p => p.centerScore > 0.22 && p.score > 0.22)
     .sort((a, b) => b.centerScore - a.centerScore)[0];
 }
 
