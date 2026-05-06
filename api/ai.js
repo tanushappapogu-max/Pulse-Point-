@@ -19,7 +19,7 @@
 //     falls back to that automatically when the proxy is unavailable.
 
 export const config = {
-  runtime: 'nodejs18.x',
+  runtime: 'nodejs',
   // 30s is plenty for a single vision request; tighter than Vercel's 60s
   // default so a hung upstream doesn't burn the function timeout.
   maxDuration: 30,
