@@ -4,13 +4,10 @@
   "outputDirectory": "pulse-point/dist",
   "framework": "vite",
   "functions": {
-    "pulse-point/api/ai.js": {
+    "api/ai.js": {
       "maxDuration": 30
     }
   },
-  "rewrites": [
-    { "source": "/api/ai", "destination": "/pulse-point/api/ai" }
-  ],
   "headers": [
     {
       "source": "/yolo11n_web_model/(.*)",

@@ -383,7 +383,8 @@ export default function App() {
       const directLabel = resolveCocoTarget(tgt);
       const localInfo = localTargetRef.current;
       const mappedLabel = localInfo?.label || directLabel;
-      const cocoMatchRaw = mappedLabel ? findTarget(predictions, mappedLabel, frame, true) : null;
+      const priorTrack = trackerRef.current.predict(now);
+      const cocoMatchRaw = mappedLabel ? findTarget(predictions, mappedLabel, frame, false, priorTrack?.bbox) : null;
       const cocoMatch = cocoMatchRaw ? {
         ...cocoMatchRaw,
         displayClass: mappedLabel !== tgt ? tgt : cocoMatchRaw.class,
@@ -730,16 +731,24 @@ export default function App() {
 }
 
 // ---- target-finding helpers (kept here so they share the module's COCO knowledge) ---
-function findTarget(predictions, target, frame, allowCandidate = true) {
+function findTarget(predictions, target, frame, allowCandidate = true, priorBox = null) {
   const aliases = getAliases(target);
-  const exact = predictions
-    .filter(p => aliases.includes(p.class.toLowerCase()))
-    .sort((a, b) => b.score - a.score)[0];
+  const exact = rankDetections(
+    predictions.filter(p => aliases.includes(p.class.toLowerCase())),
+    frame,
+    priorBox,
+    false,
+  )[0];
   if (exact) return exact;
-  return allowCandidate ? findCenterCandidate(predictions, frame) : null;
+  return allowCandidate ? findCenterCandidate(predictions, frame, priorBox) : null;
 }
 
-function findCenterCandidate(predictions, frame) {
+function findCenterCandidate(predictions, frame, priorBox = null) {
+  return rankDetections(predictions, frame, priorBox, true)
+    .filter(p => p.centerScore > 0.22 && p.score > 0.22)[0];
+}
+
+function rankDetections(predictions, frame, priorBox = null, isCandidate = false) {
   const cx = frame.width / 2, cy = frame.height / 2;
   return predictions
     .map(p => {
@@ -747,13 +756,34 @@ function findCenterCandidate(predictions, frame) {
       const pcx = x + w / 2, pcy = y + h / 2;
       const nd = Math.hypot((pcx - cx) / frame.width, (pcy - cy) / frame.height);
       const area = (w * h) / (frame.width * frame.height);
+      const continuity = priorBox ? boxContinuityScore(p.bbox, priorBox, frame) : 0;
       return {
         ...p,
-        score: p.score * 0.72,
-        centerScore: p.score + area * 1.6 - nd * 1.4,
-        isCandidate: true,
+        score: isCandidate ? p.score * 0.72 : p.score,
+        centerScore: p.score + area * 1.2 - nd * 0.9 + continuity * 1.8,
+        isCandidate,
       };
     })
-    .filter(p => p.centerScore > 0.22 && p.score > 0.22)
-    .sort((a, b) => b.centerScore - a.centerScore)[0];
+    .sort((a, b) => b.centerScore - a.centerScore);
+}
+
+function boxContinuityScore(box, priorBox, frame) {
+  const [x, y, w, h] = box;
+  const [px, py, pw, ph] = priorBox;
+  const cx = x + w / 2, cy = y + h / 2;
+  const pcx = px + pw / 2, pcy = py + ph / 2;
+  const centerDistance = Math.hypot((cx - pcx) / frame.width, (cy - pcy) / frame.height);
+  return boxIou(box, priorBox) * 0.65 + Math.max(0, 1 - centerDistance * 4) * 0.35;
+}
+
+function boxIou(a, b) {
+  const [ax, ay, aw, ah] = a;
+  const [bx, by, bw, bh] = b;
+  const x1 = Math.max(ax, bx);
+  const y1 = Math.max(ay, by);
+  const x2 = Math.min(ax + aw, bx + bw);
+  const y2 = Math.min(ay + ah, by + bh);
+  const inter = Math.max(0, x2 - x1) * Math.max(0, y2 - y1);
+  const union = aw * ah + bw * bh - inter;
+  return union <= 0 ? 0 : inter / union;
 }

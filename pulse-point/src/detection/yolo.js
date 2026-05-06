@@ -105,7 +105,10 @@ function nonMaxSuppression(predictions, iouThreshold, maxDetections) {
     if (selected.length >= maxDetections) break;
     let keep = true;
     for (const picked of selected) {
-      if (iou(pred.bbox, picked.bbox) > iouThreshold) { keep = false; break; }
+      if (pred.class === picked.class && iou(pred.bbox, picked.bbox) > iouThreshold) {
+        keep = false;
+        break;
+      }
     }
     if (keep) selected.push(pred);
   }
