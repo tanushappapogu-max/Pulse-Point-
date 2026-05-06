@@ -658,7 +658,18 @@ export default function App() {
         </div>
       )}
 
-      <div className="reticle" aria-hidden="true"><span /></div>
+      <div className="scan-sweep" aria-hidden="true" />
+
+      <div className="reticle" aria-hidden="true">
+        <div className="reticle-inner">
+          <div className="reticle-corner reticle-corner--tl" />
+          <div className="reticle-corner reticle-corner--tr" />
+          <div className="reticle-corner reticle-corner--bl" />
+          <div className="reticle-corner reticle-corner--br" />
+          <div className="reticle-dot" />
+          <div className="reticle-scan" />
+        </div>
+      </div>
 
       {mode === 'autopilot' && autoCands.length > 1 && autoIdx < autoCands.length - 1 && (
         <button className="next-cand-btn" onClick={nextAutoCand} aria-label={`Try next candidate, ${autoCands[autoIdx + 1] || ''}`}>
@@ -709,13 +720,16 @@ export default function App() {
       </div>
 
       <div className="signal-strip" aria-live="polite">
-        <strong>{status}</strong>
-        <span>
-          {match
-            ? `${match.direction} · ${match.distance}${match.fromAi ? ' · ✦AI' : ''}`
-            : aiLabel === 'scanning' ? 'AI scanning…'
-            : hapticsAvail ? 'scan slowly' : 'visual guidance mode'}
-        </span>
+        <div className="signal-strip-dot" aria-hidden="true" />
+        <div className="signal-strip-text">
+          <strong>{status}</strong>
+          <span>
+            {match
+              ? `${match.direction} · ${match.distance}${match.fromAi ? ' · ✦AI' : ''}`
+              : aiLabel === 'scanning' ? 'AI scanning…'
+              : hapticsAvail ? 'scan slowly' : 'visual guidance mode'}
+          </span>
+        </div>
       </div>
 
       <SettingsSheet

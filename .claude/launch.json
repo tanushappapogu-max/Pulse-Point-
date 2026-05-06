@@ -3,8 +3,9 @@
   "configurations": [
     {
       "name": "pulse-point-web",
-      "runtimeExecutable": "npm",
-      "runtimeArgs": ["run", "dev", "--prefix", "pulse-point"],
+      "runtimeExecutable": "/Users/tanush_appapogu/Pulse Point /Pulse-Point-/pulse-point/node_modules/.bin/vite",
+      "runtimeArgs": ["--host", "0.0.0.0", "--port", "5173"],
+      "cwd": "/Users/tanush_appapogu/Pulse Point /Pulse-Point-/pulse-point",
       "port": 5173
     }
   ]
