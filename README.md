@@ -61,3 +61,16 @@ For the Vercel project settings, keep the repository root as the root directory.
 cd pulse-point && npm install
 cd pulse-point && npm run build
 ```
+
+### Environment variables
+
+Set in Vercel Project Settings → Environment Variables:
+
+- `OPENROUTER_API_KEY` — server-side key used by `pulse-point/api/ai.js`. **Do not** prefix with `VITE_` — Vite would inline that into the client bundle and leak it.
+
+Old prototype builds used `VITE_GEMINI_API_KEY` shipped to the browser. Remove that variable from production. The proxy at `/api/ai` is the supported path.
+
+For local development:
+
+- `vercel dev` (recommended) runs the function alongside Vite.
+- Or set `VITE_GEMINI_API_KEY` in `pulse-point/.env.local` — the client will fall back to direct OpenRouter calls only when the proxy returns 404. This is dev-only convenience; never deploy with that variable set.

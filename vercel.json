@@ -2,5 +2,35 @@
   "installCommand": "cd pulse-point && npm install",
   "buildCommand": "cd pulse-point && npm run build",
   "outputDirectory": "pulse-point/dist",
-  "framework": "vite"
+  "framework": "vite",
+  "functions": {
+    "pulse-point/api/ai.js": {
+      "maxDuration": 30
+    }
+  },
+  "rewrites": [
+    { "source": "/api/ai", "destination": "/pulse-point/api/ai" }
+  ],
+  "headers": [
+    {
+      "source": "/yolo11n_web_model/(.*)",
+      "headers": [
+        { "key": "Cache-Control", "value": "public, max-age=31536000, immutable" }
+      ]
+    },
+    {
+      "source": "/icon.svg",
+      "headers": [
+        { "key": "Cache-Control", "value": "public, max-age=86400" }
+      ]
+    },
+    {
+      "source": "/(.*)",
+      "headers": [
+        { "key": "Permissions-Policy", "value": "camera=(self), microphone=(self)" },
+        { "key": "X-Content-Type-Options", "value": "nosniff" },
+        { "key": "Referrer-Policy", "value": "strict-origin-when-cross-origin" }
+      ]
+    }
+  ]
 }

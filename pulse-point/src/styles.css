@@ -98,6 +98,16 @@ input {
   border-right-width: 8px;
 }
 
+.signal-up .reticle span {
+  border-top-color: #00ff9d;
+  border-top-width: 8px;
+}
+
+.signal-down .reticle span {
+  border-bottom-color: #00ff9d;
+  border-bottom-width: 8px;
+}
+
 .start-button {
   position: absolute;
   left: 50%;
@@ -191,7 +201,8 @@ input {
 }
 
 .target-input::placeholder {
-  color: rgba(255, 255, 255, 0.46);
+  /* WCAG AA needs ~4.5:1 against the translucent dark surface — 0.46 fails. */
+  color: rgba(255, 255, 255, 0.68);
   font-weight: 550;
 }
 
@@ -302,7 +313,8 @@ input {
 }
 
 .signal-strip span {
-  color: rgba(255, 255, 255, 0.72);
+  /* Bumped from 0.72 for better contrast on the translucent backdrop */
+  color: rgba(255, 255, 255, 0.86);
   font-size: 0.78rem;
   font-weight: 760;
 }
@@ -351,3 +363,357 @@ input {
     transform: translateX(-50%);
   }
 }
+
+/* ===== screen-reader-only live region ====================================
+   Off-screen but readable by AT. We need this for full-sentence guidance
+   ("Turn left, one step away") that the visible status strip can't carry. */
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* ===== focus rings =====================================================
+   The original CSS had no :focus-visible rules at all. Keyboard and switch-
+   control users had no idea where focus was. */
+
+:focus-visible {
+  outline: 3px solid #00ff9d;
+  outline-offset: 2px;
+  border-radius: 6px;
+}
+
+.target-input:focus-visible {
+  outline: 2px solid #00ff9d;
+  outline-offset: 4px;
+}
+
+/* ===== top-right control rail ==========================================
+   Quick-access buttons that don't deserve a permanent on-screen button. */
+
+.top-rail {
+  position: absolute;
+  z-index: 10;
+  right: max(14px, env(safe-area-inset-right, 14px));
+  top: calc(max(14px, env(safe-area-inset-top, 14px)) + 64px);
+  display: grid;
+  gap: 8px;
+}
+
+.rail-btn {
+  display: grid;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: 12px;
+  color: #ffffff;
+  background: rgba(2, 5, 4, 0.62);
+  backdrop-filter: blur(18px);
+  transition: background 0.15s, border-color 0.15s;
+}
+
+.rail-btn:hover {
+  border-color: rgba(255, 255, 255, 0.32);
+}
+
+.rail-btn.active {
+  color: #03100c;
+  background: #00ff9d;
+  border-color: #00ff9d;
+}
+
+/* ===== error pill dismiss ============================================= */
+
+.error-dismiss {
+  display: inline-grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  margin-left: 8px;
+  border: 0;
+  border-radius: 50%;
+  color: #ffffff;
+  background: rgba(255, 255, 255, 0.18);
+  font-size: 1rem;
+  font-weight: 900;
+  line-height: 1;
+}
+
+/* ===== settings sheet ==================================================
+   Bottom-sheet modal. Keyboard-trapped, esc to dismiss, focuses close on
+   open and restores focus on close (handled in the React component). */
+
+.settings-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 99;
+  background: rgba(0, 0, 0, 0.6);
+  backdrop-filter: blur(4px);
+  animation: fadein 0.18s ease;
+}
+
+.settings-sheet {
+  position: fixed;
+  z-index: 100;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  max-height: 86vh;
+  padding: 14px 18px max(20px, env(safe-area-inset-bottom, 20px));
+  border-top-left-radius: 22px;
+  border-top-right-radius: 22px;
+  background: #0b1813;
+  border-top: 1px solid rgba(0, 255, 157, 0.22);
+  color: #ffffff;
+  overflow-y: auto;
+  animation: slideup 0.22s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+@media (min-width: 760px) {
+  .settings-sheet {
+    left: 50%;
+    right: auto;
+    bottom: 5vh;
+    width: min(480px, calc(100vw - 32px));
+    transform: translateX(-50%);
+    border-radius: 22px;
+    border: 1px solid rgba(0, 255, 157, 0.22);
+    border-top: 1px solid rgba(0, 255, 157, 0.22);
+    max-height: 80vh;
+  }
+}
+
+.settings-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 4px 4px 14px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  margin-bottom: 6px;
+}
+
+.settings-header h2 {
+  margin: 0;
+  font-size: 1.1rem;
+  font-weight: 900;
+}
+
+.settings-close {
+  display: grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  border: 0;
+  border-radius: 10px;
+  color: #ffffff;
+  background: rgba(255, 255, 255, 0.10);
+}
+
+.settings-body {
+  display: grid;
+  gap: 4px;
+}
+
+.settings-row {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  min-height: 56px;
+  padding: 12px 4px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.settings-row:last-child {
+  border-bottom: 0;
+}
+
+.settings-row.disabled {
+  opacity: 0.45;
+}
+
+.settings-row-text {
+  flex: 1;
+  display: grid;
+  gap: 2px;
+  cursor: pointer;
+}
+
+.settings-row-label {
+  font-size: 0.96rem;
+  font-weight: 800;
+}
+
+.settings-row-hint {
+  font-size: 0.78rem;
+  color: rgba(255, 255, 255, 0.7);
+  font-weight: 500;
+}
+
+.settings-row-value {
+  min-width: 48px;
+  text-align: right;
+  font-size: 0.85rem;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+  color: #00ff9d;
+}
+
+/* ----- toggle switch (accessible checkbox) ----- */
+
+.settings-switch {
+  appearance: none;
+  -webkit-appearance: none;
+  position: relative;
+  width: 50px;
+  height: 30px;
+  border: 0;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.18);
+  cursor: pointer;
+  transition: background 0.18s;
+}
+
+.settings-switch:checked {
+  background: #00ff9d;
+}
+
+.settings-switch::before {
+  content: "";
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background: #ffffff;
+  transition: transform 0.18s;
+}
+
+.settings-switch:checked::before {
+  transform: translateX(20px);
+  background: #03100c;
+}
+
+.settings-switch:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+/* ----- segmented control ----- */
+
+.settings-segmented {
+  display: inline-flex;
+  padding: 3px;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.08);
+  gap: 2px;
+}
+
+.settings-seg {
+  min-width: 64px;
+  padding: 8px 12px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: rgba(255, 255, 255, 0.72);
+  font-size: 0.78rem;
+  font-weight: 800;
+  text-transform: capitalize;
+  cursor: pointer;
+}
+
+.settings-seg.active {
+  background: #00ff9d;
+  color: #03100c;
+}
+
+.settings-row input[type="range"] {
+  flex: 1;
+  accent-color: #00ff9d;
+}
+
+.settings-footer {
+  margin-top: 16px;
+  padding-top: 12px;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.settings-help {
+  margin: 0;
+  color: rgba(255, 255, 255, 0.7);
+  font-size: 0.8rem;
+  line-height: 1.5;
+}
+
+/* ===== crash screen (ErrorBoundary fallback) =========================== */
+
+.crash-screen {
+  position: fixed;
+  inset: 0;
+  display: grid;
+  align-content: center;
+  justify-items: start;
+  gap: 12px;
+  padding: 28px;
+  background: #0b1813;
+  color: #ffffff;
+}
+
+.crash-screen h1 {
+  margin: 0;
+  font-size: 1.6rem;
+  font-weight: 900;
+}
+
+.crash-detail {
+  margin: 0;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.06);
+  color: rgba(255, 255, 255, 0.72);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.85rem;
+  word-break: break-word;
+  max-width: 100%;
+}
+
+.crash-reload {
+  margin-top: 8px;
+  padding: 12px 22px;
+  border: 0;
+  border-radius: 12px;
+  color: #03100c;
+  background: #00ff9d;
+  font-size: 1rem;
+  font-weight: 900;
+}
+
+/* ===== animations / motion ============================================ */
+
+@keyframes fadein {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+@keyframes slideup {
+  from { transform: translateY(20px); opacity: 0; }
+  to   { transform: translateY(0); opacity: 1; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+  .mic-btn.mic-active { animation: none; }
+}
+
