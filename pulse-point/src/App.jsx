@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Camera, Loader2, ScanLine, Square, Mic, Settings as SettingsIcon, Flashlight, FlashlightOff } from 'lucide-react';
 
-import { COCO_LABELS, resolveCocoTarget, findClosestCocoLabel, getAliases } from './detection/coco.js';
+import { COCO_LABELS, resolveCocoTarget, findClosestCocoLabel, TARGET_ALIASES, normalizeTargetText } from './detection/coco.js';
 import { loadYoloModel, runYolo } from './detection/yolo.js';
 import { BoxTracker } from './detection/tracker.js';
 import { callGeminiBox, callGeminiAutopilot } from './detection/ai.js';
@@ -17,28 +17,22 @@ import { loadSettings, saveSettings } from './lib/settings.js';
 import Announcer from './ui/Announcer.jsx';
 import SettingsSheet from './ui/SettingsSheet.jsx';
 
-// ---- detection cadence -----------------------------------------------------
-const HEAVY_COOLDOWN_MS = 2500;       // AI fallback throttle
+const HEAVY_COOLDOWN_MS = 2500;
 const NO_FIND_SECONDS = 3;
 const ADAPTIVE_FPS_MIN = 4;
 const ADAPTIVE_FPS_MAX = 15;
 const ADAPTIVE_FPS_INITIAL = 10;
 const ADAPTIVE_SLACK_MS = 25;
 
-// sensitivity → haptic gap & re-announce gap
 const SENSITIVITY_PROFILES = {
   gentle: { hapticGap: 720, announceGap: 1700 },
   medium: { hapticGap: 520, announceGap: 1200 },
   sharp:  { hapticGap: 360, announceGap: 800 },
 };
 
-// guidance signals that should bypass spam-prevention because they change
-// the user's required action.
 const URGENT_SIGNALS = new Set(['reach', 'closer', 'lost']);
 
-// ---- App -------------------------------------------------------------------
 export default function App() {
-  // refs that need to be closure-stable
   const videoRef          = useRef(null);
   const canvasRef         = useRef(null);
   const modelRef          = useRef(null);
@@ -61,21 +55,17 @@ export default function App() {
   const lastAnnouncedSignalRef = useRef('');
   const lastAnnouncedTimeRef   = useRef(0);
 
-  // adaptive FPS state
   const lightFpsRef       = useRef(ADAPTIVE_FPS_INITIAL);
-  const inferenceWindowRef = useRef([]); // ms timings, last 5
+  const inferenceWindowRef = useRef([]);
 
-  // tracker (created once)
   const trackerRef = useRef(null);
   if (!trackerRef.current) trackerRef.current = new BoxTracker();
 
-  // haptic + speech engines (created once, settings applied below)
   const hapticsRef = useRef(null);
   if (!hapticsRef.current) hapticsRef.current = new Haptics();
   const speakerRef = useRef(null);
   if (!speakerRef.current) speakerRef.current = new Speaker();
 
-  // ---- React state -------------------------------------------------------
   const [target,        setTargetState]   = useState('');
   const [draftTarget,   setDraftTarget]   = useState('');
   const [status,        setStatus]        = useState('ready');
@@ -99,14 +89,12 @@ export default function App() {
   const canVoice = useMemo(() => isVoiceSupported(), []);
   const speechAvail = useMemo(() => speakerRef.current.isAvailable(), []);
 
-  // ---- effects -----------------------------------------------------------
   useEffect(() => {
     setHapticsAvail(hapticsRef.current.isAvailable());
     return () => stopScanner();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // apply settings to engines whenever they change
   useEffect(() => {
     hapticsRef.current.setEnabled(settings.haptics);
     speakerRef.current.setEnabled(settings.speech);
@@ -114,7 +102,6 @@ export default function App() {
     saveSettings(settings);
   }, [settings]);
 
-  // ---- target handling ---------------------------------------------------
   function setTarget(t) {
     targetRef.current = t;
     setTargetState(t);
@@ -166,7 +153,6 @@ export default function App() {
     if (e.key === 'Enter') { e.preventDefault(); submitTypedTarget(); }
   }
 
-  // ---- voice -------------------------------------------------------------
   function startVoice() {
     if (!canVoice) {
       setError('Voice input is not supported on this device. Type below.');
@@ -250,9 +236,8 @@ export default function App() {
     hapticsRef.current.fire('confirm', true);
   }
 
-  // ---- camera lifecycle --------------------------------------------------
   async function startScanner() {
-    if (isRunning || startInFlightRef.current) return;
+    if (isRunningRef.current || startInFlightRef.current) return;
     startInFlightRef.current = true;
     setError('');
     setStatus('camera');
@@ -328,7 +313,6 @@ export default function App() {
     if (ok) setTorchOn(t => !t);
   }
 
-  // ---- detect loop -------------------------------------------------------
   function recordInferenceTime(ms) {
     const w = inferenceWindowRef.current;
     w.push(ms);
@@ -363,7 +347,6 @@ export default function App() {
       const lightInterval = 1000 / lightFpsRef.current;
       const ranLight = now - lastLightRunRef.current >= lightInterval;
 
-      // ---- heavy YOLO inference (paced) -------------------------------
       let predictions = lastPredsRef.current;
       if (ranLight) {
         lastLightRunRef.current = now;
@@ -379,19 +362,17 @@ export default function App() {
         }
       }
 
-      // ---- find target in predictions ---------------------------------
       const directLabel = resolveCocoTarget(tgt);
       const localInfo = localTargetRef.current;
       const mappedLabel = localInfo?.label || directLabel;
       const priorTrack = trackerRef.current.predict(now);
-      const cocoMatchRaw = mappedLabel ? findTarget(predictions, mappedLabel, frame, false, priorTrack?.bbox) : null;
+      const cocoMatchRaw = mappedLabel ? findTarget(predictions, mappedLabel, priorTrack?.bbox, frame) : null;
       const cocoMatch = cocoMatchRaw ? {
         ...cocoMatchRaw,
         displayClass: mappedLabel !== tgt ? tgt : cocoMatchRaw.class,
         source: cocoMatchRaw,
       } : null;
 
-      // ---- AI fallback (paced) ----------------------------------------
       const localCanFind = Boolean(mappedLabel);
       const noFindFramesLimit = Math.round(lightFpsRef.current * NO_FIND_SECONDS);
       const needsAi = tgt && !cocoMatch && (!localCanFind || noFindFramesRef.current > noFindFramesLimit);
@@ -420,7 +401,6 @@ export default function App() {
           .finally(() => { aiInFlightRef.current = false; });
       }
 
-      // ---- combine YOLO + AI -----------------------------------------
       let freshMatch = cocoMatch;
       if (!cocoMatch && aiBoxRef.current?.found) {
         const cb = aiBoxRef.current;
@@ -433,7 +413,6 @@ export default function App() {
         };
       }
 
-      // ---- feed tracker on fresh detection only ----------------------
       if (freshMatch && ranLight) {
         trackerRef.current.update(
           freshMatch.bbox,
@@ -444,7 +423,6 @@ export default function App() {
         );
       }
 
-      // ---- predict box for THIS render frame -------------------------
       const predicted = trackerRef.current.predict(now);
       const displayMatch = predicted ? {
         class: predicted.label,
@@ -457,7 +435,6 @@ export default function App() {
 
       draw(predictions, displayMatch);
 
-      // ---- guidance + signaling --------------------------------------
       if (!displayMatch) {
         if (ranLight) noFindFramesRef.current++;
         setMatch(null);
@@ -534,7 +511,6 @@ export default function App() {
     setAnnouncementUrgent(urgent);
   }
 
-  // ---- canvas draw -------------------------------------------------------
   function draw(predictions, targetMatch) {
     const canvas = canvasRef.current;
     const video  = videoRef.current;
@@ -587,7 +563,6 @@ export default function App() {
     ctx.fillText(label, x + 10, Math.max(26, y - 12));
   }
 
-  // ---- render ------------------------------------------------------------
   return (
     <main className={`scanner signal-${signal}`}>
       <video ref={videoRef} playsInline muted aria-hidden="true" />
@@ -744,60 +719,32 @@ export default function App() {
   );
 }
 
-// ---- target-finding helpers (kept here so they share the module's COCO knowledge) ---
-function findTarget(predictions, target, frame, allowCandidate = true, priorBox = null) {
-  const aliases = getAliases(target);
-  const exact = rankDetections(
-    predictions.filter(p => aliases.includes(p.class.toLowerCase())),
-    frame,
-    priorBox,
-    false,
-  )[0];
-  if (exact) return exact;
-  return allowCandidate ? findCenterCandidate(predictions, frame, priorBox) : null;
-}
+function findTarget(predictions, target, priorBox = null, frame = null) {
+  const norm = normalizeTargetText(target);
+  const aliases = TARGET_ALIASES[norm] ? [TARGET_ALIASES[norm]] : [norm];
 
-function findCenterCandidate(predictions, frame, priorBox = null) {
-  return rankDetections(predictions, frame, priorBox, true)
-    .filter(p => p.centerScore > 0.22 && p.score > 0.22)[0];
-}
-
-function rankDetections(predictions, frame, priorBox = null, isCandidate = false) {
-  const cx = frame.width / 2, cy = frame.height / 2;
   return predictions
-    .map(p => {
-      const [x, y, w, h] = p.bbox;
-      const pcx = x + w / 2, pcy = y + h / 2;
-      const nd = Math.hypot((pcx - cx) / frame.width, (pcy - cy) / frame.height);
-      const area = (w * h) / (frame.width * frame.height);
-      const continuity = priorBox ? boxContinuityScore(p.bbox, priorBox, frame) : 0;
-      return {
-        ...p,
-        score: isCandidate ? p.score * 0.72 : p.score,
-        centerScore: p.score + area * 1.2 - nd * 0.9 + continuity * 1.8,
-        isCandidate,
+    .filter(p => aliases.includes(p.class.toLowerCase()))
+    .sort((a, b) => {
+      if (!priorBox || !frame) return b.score - a.score;
+
+      const continuity = box => {
+        const [x, y, w, h] = box;
+        const [px, py, pw, ph] = priorBox;
+        const centerDistance = Math.hypot(
+          ((x + w / 2) - (px + pw / 2)) / frame.width,
+          ((y + h / 2) - (py + ph / 2)) / frame.height,
+        );
+        const x1 = Math.max(x, px);
+        const y1 = Math.max(y, py);
+        const x2 = Math.min(x + w, px + pw);
+        const y2 = Math.min(y + h, py + ph);
+        const inter = Math.max(0, x2 - x1) * Math.max(0, y2 - y1);
+        const union = w * h + pw * ph - inter;
+        const iou = union <= 0 ? 0 : inter / union;
+        return iou * 0.65 + Math.max(0, 1 - centerDistance * 4) * 0.35;
       };
-    })
-    .sort((a, b) => b.centerScore - a.centerScore);
-}
 
-function boxContinuityScore(box, priorBox, frame) {
-  const [x, y, w, h] = box;
-  const [px, py, pw, ph] = priorBox;
-  const cx = x + w / 2, cy = y + h / 2;
-  const pcx = px + pw / 2, pcy = py + ph / 2;
-  const centerDistance = Math.hypot((cx - pcx) / frame.width, (cy - pcy) / frame.height);
-  return boxIou(box, priorBox) * 0.65 + Math.max(0, 1 - centerDistance * 4) * 0.35;
-}
-
-function boxIou(a, b) {
-  const [ax, ay, aw, ah] = a;
-  const [bx, by, bw, bh] = b;
-  const x1 = Math.max(ax, bx);
-  const y1 = Math.max(ay, by);
-  const x2 = Math.min(ax + aw, bx + bw);
-  const y2 = Math.min(ay + ah, by + bh);
-  const inter = Math.max(0, x2 - x1) * Math.max(0, y2 - y1);
-  const union = aw * ah + bw * bh - inter;
-  return union <= 0 ? 0 : inter / union;
+      return (b.score + continuity(b.bbox) * 1.8) - (a.score + continuity(a.bbox) * 1.8);
+    })[0];
 }

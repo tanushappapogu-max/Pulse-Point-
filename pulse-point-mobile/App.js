@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
   Animated,
   Easing,
@@ -20,7 +20,6 @@ import { createDetectionResult, getHapticPattern, guidanceStages } from './src/s
 
 const flow = ['idle', 'scanning', 'targetLocked', 'orienting', 'walking', 'reaching', 'complete'];
 
-// tiny error boundary, pls no white screen
 class AppErrorBoundary extends React.Component {
   constructor(props) {
     super(props);
@@ -62,9 +61,9 @@ function AppContent() {
   const [detection, setDetection] = useState(null);
   const [heading, setHeading] = useState(0);
   const pulse = useRef(new Animated.Value(0)).current;
+  const scanTimerRef = useRef(null);
   const stage = guidanceStages[stageKey];
   const stageIndex = flow.indexOf(stageKey);
-  const pattern = useMemo(() => getHapticPattern(stageKey), [stageKey]);
 
   useEffect(() => {
     Magnetometer.setUpdateInterval(300);
@@ -99,19 +98,36 @@ function AppContent() {
     runStageHaptics(stageKey);
   }, [stageKey]);
 
+  useEffect(() => {
+    return () => {
+      if (scanTimerRef.current) clearTimeout(scanTimerRef.current);
+    };
+  }, []);
+
   function startScan() {
+    if (scanTimerRef.current) clearTimeout(scanTimerRef.current);
     setDetection(null);
     setStageKey('scanning');
-    setTimeout(() => {
-      setDetection(createDetectionResult(target));
+    const targetAtScanStart = target.trim();
+    scanTimerRef.current = setTimeout(() => {
+      setDetection(createDetectionResult(targetAtScanStart));
       setStageKey('targetLocked');
+      scanTimerRef.current = null;
     }, 2600);
+  }
+
+  function resetScan() {
+    if (scanTimerRef.current) {
+      clearTimeout(scanTimerRef.current);
+      scanTimerRef.current = null;
+    }
+    setStageKey('idle');
+    setDetection(null);
   }
 
   function nextStage() {
     if (stageKey === 'complete') {
-      setStageKey('idle');
-      setDetection(null);
+      resetScan();
       return;
     }
     const next = flow[Math.min(stageIndex + 1, flow.length - 1)];
@@ -129,7 +145,12 @@ function AppContent() {
   });
 
   if (!permission) {
-    return <LoadingScreen />;
+    return (
+      <View style={styles.permissionScreen}>
+        <StatusBar style="light" />
+        <Text style={styles.permissionTitle}>Loading Pulse Point</Text>
+      </View>
+    );
   }
 
   if (!permission.granted) {
@@ -152,7 +173,7 @@ function AppContent() {
     <View style={styles.app}>
       <StatusBar style="light" />
       {/* autofocus: lowercase is correct for expo-camera v16 CameraView
-          (M4 fix — autoFocus was wrong casing) */}
+          in the current CameraView API. */}
       <CameraView style={styles.camera} facing="back" autofocus="on" />
       <View style={styles.cameraShade} />
 
@@ -183,7 +204,6 @@ function AppContent() {
           <Pressable
             style={[
               styles.scanButton,
-              // B7 fix: greyed out when target is empty, looks weird to scan for nothing
               !target.trim() && { opacity: 0.38 }
             ]}
             onPress={target.trim() ? startScan : null}
@@ -252,17 +272,16 @@ function AppContent() {
 
           <View style={styles.mapAndRing}>
             <MiniMap stageKey={stageKey} detection={detection} />
-            <HapticGrid pattern={pattern} />
+            <HapticGrid pattern={getHapticPattern(stageKey)} />
           </View>
 
           <View style={styles.actions}>
-            <Pressable style={styles.secondaryButton} onPress={() => setStageKey('idle')}>
+            <Pressable style={styles.secondaryButton} onPress={resetScan}>
               <Text style={styles.secondaryButtonText}>Reset</Text>
             </Pressable>
             <Pressable
               style={[
                 styles.primaryButtonSmall,
-                // B7 fix: also grey out the main action button at idle when no target
                 stageKey === 'idle' && !target.trim() && { opacity: 0.38 }
               ]}
               onPress={stageKey === 'idle' ? (target.trim() ? startScan : null) : nextStage}
@@ -335,15 +354,6 @@ function HapticGrid({ pattern }) {
           />
         ))}
       </View>
-    </View>
-  );
-}
-
-function LoadingScreen() {
-  return (
-    <View style={styles.permissionScreen}>
-      <StatusBar style="light" />
-      <Text style={styles.permissionTitle}>Loading Pulse Point</Text>
     </View>
   );
 }
