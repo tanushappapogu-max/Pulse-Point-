@@ -112,13 +112,13 @@ function buildSentence(match, signal, distanceText, meters) {
 
 function buildSpeechPhrase(signal, meters) {
   // Generate very short phrases for speech synthesis to avoid overlaps.
-  // These are quick to say and won't interrupt each other.
-  const shortDist = !meters ? '' : meters < 0.5 ? 'close' : meters < 1 ? 'half meter' : 'far';
+  // Phrases are directional commands, not location descriptions.
+  const distCommand = !meters ? '' : meters < 0.5 ? 'hold' : 'move closer';
   
   switch (signal) {
     case 'reach':   return 'Reach';
     case 'closer':  return 'Closer';
-    case 'locked':  return shortDist || 'Set';
+    case 'locked':  return distCommand || 'Set';
     case 'left':    return 'Left';
     case 'right':   return 'Right';
     case 'up':      return 'Up';

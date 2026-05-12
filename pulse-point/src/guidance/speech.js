@@ -11,8 +11,8 @@
 //   - Throttles repetition of the same phrase to MIN_GAP_MS unless `urgent`.
 //   - Prefers a quality voice if one is available.
 
-const MIN_GAP_MS = 1000;
-const URGENT_GAP_MS = 250;
+const MIN_GAP_MS = 1500;
+const URGENT_GAP_MS = 500;
 
 export class Speaker {
   constructor() {
