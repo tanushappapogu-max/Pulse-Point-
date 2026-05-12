@@ -6,13 +6,13 @@
 // "what" + "how far" context that vibration can't carry.
 //
 // Behavior:
-//   - Cancels prior utterances when a new one comes in (interruptible — the
-//     user shouldn't hear "left" finishing while now they're already centered).
+//   - Queues utterances instead of canceling, allowing current speech to finish.
+//   - For rapid direction changes, cancels only if a new direction is urgent.
 //   - Throttles repetition of the same phrase to MIN_GAP_MS unless `urgent`.
 //   - Prefers a quality voice if one is available.
 
-const MIN_GAP_MS = 1400;
-const URGENT_GAP_MS = 350;
+const MIN_GAP_MS = 1000;
+const URGENT_GAP_MS = 250;
 
 export class Speaker {
   constructor() {
@@ -21,6 +21,7 @@ export class Speaker {
     this.enabled = false;
     this.rate = 1.15;
     this.voice = null;
+    this.isSpeaking = false;
     this._tryPickVoice();
     if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
       // voice list loads async on first call in most browsers
@@ -43,6 +44,7 @@ export class Speaker {
 
   cancel() {
     if (this.isAvailable()) window.speechSynthesis.cancel();
+    this.isSpeaking = false;
   }
 
   /**
@@ -54,15 +56,26 @@ export class Speaker {
     if (!this.enabled || !this.isAvailable() || !text) return;
     const now = Date.now();
     const gap = urgent ? URGENT_GAP_MS : MIN_GAP_MS;
+    
+    // Don't repeat the same phrase too soon
     if (!force && text === this.lastSaid && now - this.lastTime < gap) return;
-    if (!force && now - this.lastTime < gap && !urgent) return;
+    
+    // For urgent or changed phrases, interrupt; otherwise wait for completion
+    if (force || (urgent && text !== this.lastSaid)) {
+      window.speechSynthesis.cancel();
+    }
 
-    window.speechSynthesis.cancel();
     const u = new SpeechSynthesisUtterance(text);
     u.rate = this.rate;
     u.pitch = 1;
     u.volume = 1;
     if (this.voice) u.voice = this.voice;
+    
+    // Track speaking state
+    u.onstart = () => { this.isSpeaking = true; };
+    u.onend = () => { this.isSpeaking = false; };
+    u.onerror = () => { this.isSpeaking = false; };
+    
     window.speechSynthesis.speak(u);
     this.lastSaid = text;
     this.lastTime = now;

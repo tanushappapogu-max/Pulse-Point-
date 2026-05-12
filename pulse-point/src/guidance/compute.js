@@ -90,6 +90,7 @@ export function computeGuidance(match, frame, prevArea) {
     cx,
     cy,
     sentence: buildSentence(match, signal, distanceText, meters),
+    speechPhrase: buildSpeechPhrase(signal, meters),
   };
 }
 
@@ -106,6 +107,23 @@ function buildSentence(match, signal, distanceText, meters) {
     case 'up':      return `Tilt up. ${capitalize(name)} ${dist}.`;
     case 'down':    return `Tilt down. ${capitalize(name)} ${dist}.`;
     default:        return `${capitalize(name)} ${dist}.`;
+  }
+}
+
+function buildSpeechPhrase(signal, meters) {
+  // Generate very short phrases for speech synthesis to avoid overlaps.
+  // These are quick to say and won't interrupt each other.
+  const shortDist = !meters ? '' : meters < 0.5 ? 'close' : meters < 1 ? 'half meter' : 'far';
+  
+  switch (signal) {
+    case 'reach':   return 'Reach';
+    case 'closer':  return 'Closer';
+    case 'locked':  return shortDist || 'Set';
+    case 'left':    return 'Left';
+    case 'right':   return 'Right';
+    case 'up':      return 'Up';
+    case 'down':    return 'Down';
+    default:        return 'Found';
   }
 }
 

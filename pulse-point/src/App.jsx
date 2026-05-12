@@ -466,7 +466,7 @@ export default function App() {
           hapticsRef.current.fire('found', true);
           setAnnouncement(g.sentence);
           setAnnouncementUrgent(true);
-          speakerRef.current.say(g.sentence, { urgent: true, force: true });
+          speakerRef.current.say(g.speechPhrase, { urgent: true, force: true });
           lastAnnouncedSignalRef.current = g.signal;
           lastAnnouncedTimeRef.current = now;
         } else {
@@ -498,7 +498,7 @@ export default function App() {
       lastAnnouncedTimeRef.current = now;
       setAnnouncement(g.sentence);
       setAnnouncementUrgent(URGENT_SIGNALS.has(g.signal) || signalChanged);
-      speakerRef.current.say(g.sentence, { urgent: URGENT_SIGNALS.has(g.signal) });
+      speakerRef.current.say(g.speechPhrase, { urgent: URGENT_SIGNALS.has(g.signal) });
     }
   }
 
