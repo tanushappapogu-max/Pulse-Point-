@@ -6,13 +6,14 @@
 // "what" + "how far" context that vibration can't carry.
 //
 // Behavior:
-//   - Queues utterances instead of canceling, allowing current speech to finish.
-//   - For rapid direction changes, cancels only if a new direction is urgent.
+//   - Queues utterances to prevent overlapping by waiting for current speech to finish.
+//   - Only interrupts for truly urgent signals (reach, closer).
+//   - Tracks speaking state and plays pending speech when current finishes.
 //   - Throttles repetition of the same phrase to MIN_GAP_MS unless `urgent`.
 //   - Prefers a quality voice if one is available.
 
-const MIN_GAP_MS = 1500;
-const URGENT_GAP_MS = 500;
+const MIN_GAP_MS = 2000;
+const URGENT_GAP_MS = 600;
 
 export class Speaker {
   constructor() {
@@ -22,6 +23,8 @@ export class Speaker {
     this.rate = 1.15;
     this.voice = null;
     this.isSpeaking = false;
+    this.pendingText = null;
+    this.pendingUrgent = false;
     this._tryPickVoice();
     if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
       // voice list loads async on first call in most browsers
@@ -45,10 +48,11 @@ export class Speaker {
   cancel() {
     if (this.isAvailable()) window.speechSynthesis.cancel();
     this.isSpeaking = false;
+    this.pendingText = null;
   }
 
   /**
-   * Speak a short phrase. Repeats are throttled.
+   * Speak a short phrase. Queues if currently speaking.
    * @param {string} text
    * @param {{urgent?: boolean, force?: boolean}} opts
    */
@@ -60,9 +64,18 @@ export class Speaker {
     // Don't repeat the same phrase too soon
     if (!force && text === this.lastSaid && now - this.lastTime < gap) return;
     
-    // For urgent or changed phrases, interrupt; otherwise wait for completion
-    if (force || (urgent && text !== this.lastSaid)) {
+    // If currently speaking, queue instead of interrupting (except for forced urgent)
+    if (this.isSpeaking && !(force && urgent)) {
+      this.pendingText = text;
+      this.pendingUrgent = urgent;
+      return;
+    }
+    
+    // For forced urgent, cancel immediately
+    if (force && urgent) {
       window.speechSynthesis.cancel();
+      this.isSpeaking = false;
+      this.pendingText = null;
     }
 
     const u = new SpeechSynthesisUtterance(text);
@@ -71,14 +84,29 @@ export class Speaker {
     u.volume = 1;
     if (this.voice) u.voice = this.voice;
     
-    // Track speaking state
     u.onstart = () => { this.isSpeaking = true; };
-    u.onend = () => { this.isSpeaking = false; };
-    u.onerror = () => { this.isSpeaking = false; };
+    u.onend = () => { 
+      this.isSpeaking = false;
+      this._playPending();
+    };
+    u.onerror = () => { 
+      this.isSpeaking = false;
+      this._playPending();
+    };
     
     window.speechSynthesis.speak(u);
     this.lastSaid = text;
     this.lastTime = now;
+  }
+
+  _playPending() {
+    if (this.pendingText) {
+      const text = this.pendingText;
+      const urgent = this.pendingUrgent;
+      this.pendingText = null;
+      this.pendingUrgent = false;
+      this.say(text, { urgent });
+    }
   }
 
   _tryPickVoice() {

@@ -492,13 +492,22 @@ export default function App() {
     const profile = SENSITIVITY_PROFILES[settings.sensitivity] || SENSITIVITY_PROFILES.medium;
     const signalChanged = g.signal !== lastAnnouncedSignalRef.current;
     const timeOk = now - lastAnnouncedTimeRef.current >= profile.announceGap;
-    if (!signalChanged && !timeOk) return;
+    
+    // Only announce if: truly urgent, or enough time has passed (not on every direction change)
+    if (!URGENT_SIGNALS.has(g.signal) && !timeOk) return;
+    
     if (URGENT_SIGNALS.has(g.signal) || signalChanged || timeOk) {
       lastAnnouncedSignalRef.current = g.signal;
       lastAnnouncedTimeRef.current = now;
       setAnnouncement(g.sentence);
       setAnnouncementUrgent(URGENT_SIGNALS.has(g.signal) || signalChanged);
-      speakerRef.current.say(g.speechPhrase, { urgent: URGENT_SIGNALS.has(g.signal) });
+      
+      // Only force interrupt for truly urgent signals (reach, closer)
+      const shouldForce = URGENT_SIGNALS.has(g.signal);
+      speakerRef.current.say(g.speechPhrase, { 
+        urgent: URGENT_SIGNALS.has(g.signal),
+        force: shouldForce
+      });
     }
   }
 
