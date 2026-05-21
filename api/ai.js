@@ -32,17 +32,71 @@ const ALLOWED_MODELS = new Set([
   'google/gemini-flash-1.5-8b',
 ]);
 
+// Allowed origins: production deployment + local dev ports.
+const ALLOWED_ORIGINS = new Set([
+  process.env.ALLOWED_ORIGIN || 'https://pulse-point.vercel.app',
+  'http://localhost:5173',
+  'http://localhost:4173',
+]);
+
+// In-memory sliding window rate limiter.
+// Vercel warm instances share this map; cold starts reset it — acceptable
+// trade-off for a free-tier protection layer.
+// Key = client IP, value = array of request timestamps within the window.
+const rateLimitMap = new Map();
+const RATE_LIMIT_WINDOW_MS = 60_000; // 1 minute
+const RATE_LIMIT_MAX = 10;           // max requests per window per IP
+
+function checkRateLimit(ip) {
+  const now = Date.now();
+  const prev = (rateLimitMap.get(ip) || []).filter(t => now - t < RATE_LIMIT_WINDOW_MS);
+  if (prev.length >= RATE_LIMIT_MAX) return false;
+  prev.push(now);
+  rateLimitMap.set(ip, prev);
+  return true;
+}
+
+// Evict stale entries every 2 min so the map doesn't grow on warm instances.
+setInterval(() => {
+  const cutoff = Date.now() - RATE_LIMIT_WINDOW_MS;
+  for (const [ip, times] of rateLimitMap) {
+    const fresh = times.filter(t => t > cutoff);
+    if (fresh.length === 0) rateLimitMap.delete(ip);
+    else rateLimitMap.set(ip, fresh);
+  }
+}, 120_000);
+
 export default async function handler(req, res) {
-  // CORS for same-origin only (the deployed app)
+  const origin = req.headers.origin || '';
+
+  // Strict origin enforcement — only the deployed app (and local dev) may call this.
+  if (origin && !ALLOWED_ORIGINS.has(origin)) {
+    return res.status(403).json({ error: 'Forbidden' });
+  }
+
   res.setHeader('Vary', 'Origin');
+  if (origin && ALLOWED_ORIGINS.has(origin)) {
+    res.setHeader('Access-Control-Allow-Origin', origin);
+    res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+  }
 
   if (req.method === 'OPTIONS') {
-    res.setHeader('Allow', 'POST, OPTIONS');
     return res.status(204).end();
   }
   if (req.method !== 'POST') {
     res.setHeader('Allow', 'POST');
     return res.status(405).json({ error: 'Method not allowed' });
+  }
+
+  // Per-IP rate limiting. X-Forwarded-For is set by Vercel's edge.
+  const clientIp =
+    (req.headers['x-forwarded-for'] || '').split(',')[0].trim() ||
+    req.socket?.remoteAddress ||
+    'unknown';
+  if (!checkRateLimit(clientIp)) {
+    res.setHeader('Retry-After', '60');
+    return res.status(429).json({ error: 'Too many requests — try again in a minute' });
   }
 
   const key = process.env.OPENROUTER_API_KEY;
@@ -81,7 +135,7 @@ export default async function handler(req, res) {
         authorization: `Bearer ${key}`,
         'content-type': 'application/json',
         // OpenRouter likes a referer for free-tier rate limit fairness
-        'http-referer': req.headers.origin || 'https://pulse-point.vercel.app',
+        'http-referer': origin || 'https://pulse-point.vercel.app',
         'x-title': 'Pulse Point',
       },
       body: JSON.stringify(body),
