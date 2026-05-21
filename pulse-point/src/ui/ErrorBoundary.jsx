@@ -17,6 +17,20 @@ export default class ErrorBoundary extends React.Component {
   componentDidCatch(error, info) {
     // eslint-disable-next-line no-console
     console.error('Pulse Point crashed:', error, info);
+
+    if (typeof fetch === 'function') {
+      fetch('/api/error', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          message: error?.message,
+          stack: error?.stack,
+          componentStack: info?.componentStack,
+        }),
+      }).catch(() => {
+        // Ignore reporting failures so crash UI remains responsive.
+      });
+    }
   }
 
   handleReload = () => {

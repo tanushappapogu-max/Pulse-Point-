@@ -21,6 +21,7 @@ export const TARGET_ALIASES = {
   tv: 'tv', television: 'tv', monitor: 'tv', screen: 'tv',
   sofa: 'couch', couch: 'couch',
   laptop: 'laptop', computer: 'laptop', macbook: 'laptop', notebook: 'laptop',
+  labtop: 'laptop',
   remote: 'remote', 'tv remote': 'remote', 'remote control': 'remote',
   ship: 'boat',
   cup: 'cup', mug: 'cup', glass: 'cup',
@@ -77,6 +78,8 @@ export function resolveCocoTarget(tgt) {
 export function findClosestCocoLabel(text) {
   const norm = normalizeTargetText(text);
   if (!norm) return null;
+  if (TARGET_ALIASES[norm]) return { label: TARGET_ALIASES[norm], score: 1 };
+  if (COCO_KNOWN.has(norm)) return { label: norm, score: 1 };
   let best = { label: null, score: 0 };
   for (const label of COCO_LABELS) {
     const score = stringSimilarity(norm, label);
