@@ -4,14 +4,14 @@ import { Camera, Loader2, ScanLine, Square, Mic, Settings as SettingsIcon, Flash
 import { COCO_LABELS, resolveCocoTarget, findClosestCocoLabel, TARGET_ALIASES, normalizeTargetText } from './detection/coco.js';
 import { loadYoloModel, runYolo } from './detection/yolo.js';
 import { BoxTracker } from './detection/tracker.js';
-import { callGeminiBox, callGeminiAutopilot } from './detection/ai.js';
+import { KNOWN_OBJECTS, suggestObjects } from './detection/objectList.js';
 
 import { computeGuidance } from './guidance/compute.js';
 import { Haptics } from './guidance/haptics.js';
 import { Speaker } from './guidance/speech.js';
 
 import { getWideCameraStream, setWidestZoom, hasTorchSupport, setTorch, captureJpeg, stopStream } from './lib/camera.js';
-import { startListening, isVoiceSupported, isVagueIntent, extractTarget } from './lib/voice.js';
+import { startListening, isVoiceSupported, extractTarget } from './lib/voice.js';
 import { loadSettings, saveSettings } from './lib/settings.js';
 
 import Announcer from './ui/Announcer.jsx';
@@ -47,8 +47,7 @@ export default function App() {
   const prevAreaRef       = useRef(0);
   const foundOnceRef      = useRef(false);
   const noFindFramesRef   = useRef(0);
-  const aiBoxRef          = useRef(null);
-  const aiInFlightRef     = useRef(false);
+  const suggestions       = useRef([]);
   const localTargetRef    = useRef(null);
   const targetRef         = useRef('');
   const isRunningRef      = useRef(false);
@@ -75,10 +74,7 @@ export default function App() {
   const [isRunning,     setIsRunning]     = useState(false);
   const [hapticsAvail,  setHapticsAvail]  = useState(true);
   const [isListening,   setIsListening]   = useState(false);
-  const [aiLabel,       setAiLabel]       = useState('');
-  const [mode,          setMode]          = useState('normal'); // 'normal' | 'autopilot'
-  const [autoCands,     setAutoCands]     = useState([]);
-  const [autoIdx,       setAutoIdx]       = useState(0);
+  const [mode,          setMode]          = useState('normal');
   const [settings,      setSettings]      = useState(() => loadSettings());
   const [settingsOpen,  setSettingsOpen]  = useState(false);
   const [torchOn,       setTorchOn]       = useState(false);
@@ -181,59 +177,15 @@ export default function App() {
     });
   }
 
-  async function handleVoice(text) {
+  function handleVoice(text) {
     setIsListening(false);
-    if (isVagueIntent(text)) {
-      runAutopilot(text);
-      return;
-    }
-    const extracted = extractTarget(text);
+    const extracted = extractTarget(text) || text.trim();
     if (extracted) {
       setTarget(extracted);
       setMode('normal');
       if (!isRunningRef.current) startScanner();
       else setStatus('looking');
     }
-  }
-
-  async function runAutopilot(intent) {
-    setMode('autopilot');
-    setStatus('thinking…');
-    setAiLabel('scanning');
-    pauseDetectRef.current = true;
-    if (!streamRef.current) await startScanner();
-    try {
-      const frame = captureJpeg(videoRef.current);
-      const result = await callGeminiAutopilot(frame, intent);
-      if (result?.__error) {
-        setMode('normal');
-        setError(`AI error: ${result.__error}`);
-        setStatus('ready');
-      } else if (result?.candidates?.length > 0) {
-        setAutoCands(result.candidates);
-        setAutoIdx(0);
-        setTarget(result.candidates[0]);
-        setStatus('looking');
-        hapticsRef.current.fire('confirm', true);
-        if (!isRunningRef.current) startScanner();
-      } else {
-        setMode('normal');
-        setError('Nothing matched that intent. Try being more specific.');
-        setStatus('ready');
-      }
-    } finally {
-      pauseDetectRef.current = false;
-      setAiLabel('');
-      if (streamRef.current && !loopRef.current) detect();
-    }
-  }
-
-  function nextAutoCand() {
-    const next = autoIdx + 1;
-    if (next >= autoCands.length) { setAutoCands([]); setMode('normal'); return; }
-    setAutoIdx(next);
-    setTarget(autoCands[next]);
-    hapticsRef.current.fire('confirm', true);
   }
 
   async function startScanner() {
@@ -373,45 +325,7 @@ export default function App() {
         source: cocoMatchRaw,
       } : null;
 
-      const localCanFind = Boolean(mappedLabel);
-      const noFindFramesLimit = Math.round(lightFpsRef.current * NO_FIND_SECONDS);
-      const needsAi = tgt && !cocoMatch && (!localCanFind || noFindFramesRef.current > noFindFramesLimit);
-      const shouldRunHeavy = needsAi && (now - lastHeavyRunRef.current >= HEAVY_COOLDOWN_MS);
-
-      if (shouldRunHeavy && !aiInFlightRef.current) {
-        lastHeavyRunRef.current = now;
-        aiInFlightRef.current = true;
-        setAiLabel('scanning');
-        const img = captureJpeg(video);
-        callGeminiBox(img, tgt)
-          .then(r => {
-            if (r?.found && r.x != null) {
-              aiBoxRef.current = r;
-              setAiLabel('found');
-              setTimeout(() => setAiLabel(''), 900);
-            } else if (r?.__error) {
-              setAiLabel('');
-              if (!error) setError(`AI: ${r.__error}`);
-            } else {
-              aiBoxRef.current = null;
-              setAiLabel('');
-            }
-          })
-          .catch(() => setAiLabel(''))
-          .finally(() => { aiInFlightRef.current = false; });
-      }
-
       let freshMatch = cocoMatch;
-      if (!cocoMatch && aiBoxRef.current?.found) {
-        const cb = aiBoxRef.current;
-        freshMatch = {
-          class: tgt,
-          displayClass: tgt,
-          score: cb.confidence || 0.8,
-          bbox: [cb.x * frame.width, cb.y * frame.height, cb.w * frame.width, cb.h * frame.height],
-          fromAi: true,
-        };
-      }
 
       if (freshMatch && ranLight) {
         trackerRef.current.update(
@@ -419,7 +333,7 @@ export default function App() {
           freshMatch.score,
           freshMatch.displayClass || freshMatch.class,
           now,
-          freshMatch.fromAi || false,
+          false,
         );
       }
 
@@ -429,7 +343,7 @@ export default function App() {
         displayClass: predicted.label,
         bbox: predicted.bbox,
         score: predicted.confidence,
-        fromAi: predicted.fromAi,
+        fromAi: false,
         ageMs: predicted.ageMs,
       } : null;
 
@@ -456,7 +370,7 @@ export default function App() {
           direction: g.direction,
           distance: g.distance,
           distanceMeters: g.distanceMeters,
-          fromAi: displayMatch.fromAi,
+          fromAi: false,
         });
         setStatus(g.status);
         setSignal(g.signal);
@@ -555,15 +469,13 @@ export default function App() {
     // visualize extrapolation: fade box as ageMs grows
     const opacity = targetMatch.ageMs > 100 ? 0.7 : 1;
     ctx.globalAlpha = opacity;
-    ctx.setLineDash(targetMatch.fromAi ? [12, 6] : []);
     ctx.strokeStyle = '#00ff9d';
-    ctx.lineWidth   = targetMatch.fromAi ? 5 : 8;
+    ctx.lineWidth   = 8;
     ctx.strokeRect(x, y, bw, bh);
-    ctx.setLineDash([]);
     ctx.globalAlpha = 1;
 
     const display = targetMatch.displayClass || targetMatch.class;
-    const label = `${display} ${Math.round(targetMatch.score * 100)}%${targetMatch.fromAi ? ' ✦' : ''}`;
+    const label = `${display} ${Math.round(targetMatch.score * 100)}%`;
     const labelW = Math.min(280, bw);
     ctx.fillStyle = '#00ff9d';
     ctx.fillRect(x, Math.max(0, y - 38), labelW, 38);
@@ -620,14 +532,6 @@ export default function App() {
         </div>
       )}
 
-      {aiLabel && (
-        <div className={`ai-pill${aiLabel === 'found' ? ' ai-found' : ''}`} role="status">
-          {aiLabel === 'scanning'
-            ? <><Loader2 size={14} aria-hidden="true" /><span>AI scanning…</span></>
-            : <span>✦ AI found it</span>}
-        </div>
-      )}
-
       {error && (
         <div className="error-pill" role="alert">
           {error}
@@ -655,12 +559,6 @@ export default function App() {
         </div>
       </div>
 
-      {mode === 'autopilot' && autoCands.length > 1 && autoIdx < autoCands.length - 1 && (
-        <button className="next-cand-btn" onClick={nextAutoCand} aria-label={`Try next candidate, ${autoCands[autoIdx + 1] || ''}`}>
-          Next option →
-        </button>
-      )}
-
       <div className="target-bar">
         <button
           className={`mic-btn${isListening ? ' mic-active' : ''}${!canVoice ? ' mic-disabled' : ''}`}
@@ -673,9 +571,6 @@ export default function App() {
         </button>
 
         <div className="target-display" aria-label="Target object">
-          {mode === 'autopilot' && autoCands.length > 0 && (
-            <span className="auto-label">AUTO</span>
-          )}
           <input
             className="target-input"
             type="text"
@@ -709,8 +604,7 @@ export default function App() {
           <strong>{status}</strong>
           <span>
             {match
-              ? `${match.direction} · ${match.distance}${match.fromAi ? ' · ✦AI' : ''}`
-              : aiLabel === 'scanning' ? 'AI scanning…'
+              ? `${match.direction} · ${match.distance}`
               : hapticsAvail ? 'scan slowly' : 'visual guidance mode'}
           </span>
         </div>

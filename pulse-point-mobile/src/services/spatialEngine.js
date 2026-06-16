@@ -50,6 +50,58 @@ export const guidanceStages = {
   }
 };
 
+export function buildStageFromDetection(detection) {
+  if (!detection) return null;
+
+  const dist = detection.position.zMeters;
+  const cx = detection.position.x;
+  const conf = detection.confidence;
+
+  let turnDeg = 0;
+  if (cx < 0.35) turnDeg = -Math.round((0.5 - cx) * 60);
+  else if (cx > 0.65) turnDeg = Math.round((cx - 0.5) * 60);
+
+  const turnDir = turnDeg < 0 ? 'left' : turnDeg > 0 ? 'right' : 'straight';
+
+  if (dist <= 0.4) {
+    return {
+      label: 'Reach zone',
+      instruction: `${detection.name} is right in front of you. Reach forward.`,
+      distanceMeters: dist,
+      turnDegrees: turnDeg,
+      confidence: conf,
+    };
+  }
+
+  if (dist <= 1.2) {
+    return {
+      label: 'Almost there',
+      instruction: `${detection.name} is about ${dist.toFixed(1)} meters ahead. Take a few steps forward.`,
+      distanceMeters: dist,
+      turnDegrees: turnDeg,
+      confidence: conf,
+    };
+  }
+
+  if (Math.abs(turnDeg) > 10) {
+    return {
+      label: `Turn ${turnDir}`,
+      instruction: `${detection.name} detected ${dist.toFixed(1)} meters away. Turn ${turnDir} about ${Math.abs(turnDeg)} degrees.`,
+      distanceMeters: dist,
+      turnDegrees: turnDeg,
+      confidence: conf,
+    };
+  }
+
+  return {
+    label: 'Move forward',
+    instruction: `${detection.name} is ${dist.toFixed(1)} meters ahead. Walk forward slowly.`,
+    distanceMeters: dist,
+    turnDegrees: turnDeg,
+    confidence: conf,
+  };
+}
+
 export function createDetectionResult(targetName) {
   const cleanName = (targetName || '').trim();
   const seedText = cleanName || 'target';
@@ -80,6 +132,7 @@ export function createDetectionResult(targetName) {
   return {
     id: `${(cleanName || 'target').toLowerCase().replace(/\s+/g, '-')}-${Date.now()}`,
     name: cleanName || 'target object',
+    source: 'simulated',
     confidence: 0.72 + nextUnit() * 0.22,
     position: {
       x: centerX,

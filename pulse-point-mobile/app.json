@@ -29,7 +29,8 @@
           "cameraPermission": "Pulse Point uses the camera to scan the room and identify target objects."
         }
       ],
-      "expo-asset"
+      "expo-asset",
+      "expo-font"
     ]
   }
 }

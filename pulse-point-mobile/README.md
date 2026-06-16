@@ -15,11 +15,16 @@ Then scan the QR code with Expo Go.
 
 - Camera permission and live camera view
 - Object request input, for example `mouse`
-- Scan-to-target guidance state machine
+- Scan-to-target guidance state machine with simulated recognition/depth
 - Compass heading from device sensors
-- Phone haptic feedback for scan, target lock, orientation, walking, reach, and complete states
+- Spoken guidance for each navigation stage
+- Phone haptic feedback patterns for scan, target lock, orientation, walking, reach, and complete states
 - 3x3 haptic ring visualization
 - Mini spatial map with user position, obstacles, route, and target
+
+## Prototype Boundary
+
+The Expo app is a native-feeling demo of the guidance workflow, not the final sensing stack. Current object boxes and depth values are simulated so the full user flow can be tested on any phone. Real object recognition and LiDAR/depth sensing require a native build path.
 
 ## Native Sensor Roadmap
 
