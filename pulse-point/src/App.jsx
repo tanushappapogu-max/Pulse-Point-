@@ -47,7 +47,8 @@ export default function App() {
   const prevAreaRef       = useRef(0);
   const foundOnceRef      = useRef(false);
   const noFindFramesRef   = useRef(0);
-  const suggestions       = useRef([]);
+  const aiBoxRef          = useRef(null);
+  const aiInFlightRef     = useRef(false);
   const localTargetRef    = useRef(null);
   const targetRef         = useRef('');
   const isRunningRef      = useRef(false);
