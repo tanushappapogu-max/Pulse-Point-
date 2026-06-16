@@ -1,6 +1,6 @@
 import * as ort from 'onnxruntime-web';
 
-ort.env.wasm.wasmPaths = 'https://cdn.jsdelivr.net/npm/onnxruntime-web@1.20.1/dist/';
+ort.env.wasm.wasmPaths = '/';
 ort.env.wasm.numThreads = 1;
 
 const INPUT_W = 640;
