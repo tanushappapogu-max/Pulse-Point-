@@ -2,9 +2,9 @@ import React, { useEffect, useMemo, useRef, useState, useCallback } from 'react'
 import { Camera, Loader2, ScanLine, Square, Mic, Settings as SettingsIcon, Flashlight, FlashlightOff } from 'lucide-react';
 
 import { COCO_LABELS, resolveCocoTarget, findClosestCocoLabel, TARGET_ALIASES, normalizeTargetText } from './detection/coco.js';
-import { loadYoloModel, runYolo } from './detection/yolo.js';
+import { loadModel, runInference } from './detection/engine.js';
 import { BoxTracker } from './detection/tracker.js';
-import { KNOWN_OBJECTS, suggestObjects } from './detection/objectList.js';
+import { KNOWN_OBJECTS } from './detection/objectList.js';
 
 import { computeGuidance } from './guidance/compute.js';
 import { Haptics } from './guidance/haptics.js';
@@ -228,7 +228,7 @@ export default function App() {
       hapticsRef.current.fire('looking', true);
 
       if (!modelRef.current) {
-        modelRef.current = await loadYoloModel();
+        modelRef.current = await loadModel();
       }
 
       // race: user pressed Stop while model loaded — bail out
@@ -309,14 +309,14 @@ export default function App() {
         lastLightRunRef.current = now;
         const t0 = performance.now();
         try {
-          predictions = await runYolo(video, model);
+          predictions = await runInference(video);
           lastPredsRef.current = predictions;
           const elapsed = performance.now() - t0;
           recordInferenceTime(elapsed);
           setCnnMs(Math.round(elapsed));
         } catch (e) {
           // eslint-disable-next-line no-console
-          console.warn('CNN inference failed', e);
+          console.warn('Inference error', e);
           predictions = lastPredsRef.current;
         }
       }
