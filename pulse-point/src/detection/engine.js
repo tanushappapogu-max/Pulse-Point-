@@ -2,6 +2,7 @@ import * as ort from 'onnxruntime-web';
 
 ort.env.wasm.wasmPaths = '/';
 ort.env.wasm.numThreads = 1;
+ort.env.wasm.simd = true;
 
 const INPUT_W = 640;
 const INPUT_H = 640;
