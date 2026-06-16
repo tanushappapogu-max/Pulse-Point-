@@ -742,6 +742,192 @@ button, input { font: inherit; touch-action: manipulation; }
   }
 }
 
+/* ── CNN badge (top-left) ────────────────────────────────── */
+.cnn-badge {
+  position: absolute;
+  z-index: 10;
+  left: max(14px, env(safe-area-inset-left, 14px));
+  top: max(14px, env(safe-area-inset-top, 14px));
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 12px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  backdrop-filter: var(--blur);
+  font-size: 0.72rem;
+  font-weight: 800;
+  letter-spacing: 0.07em;
+  color: var(--text-dim);
+  pointer-events: none;
+  user-select: none;
+}
+.cnn-badge.cnn-active {
+  border-color: rgba(0,255,157,0.35);
+  color: var(--green);
+}
+.cnn-dot {
+  width: 7px; height: 7px;
+  border-radius: 50%;
+  background: var(--text-dim);
+  flex-shrink: 0;
+}
+.cnn-active .cnn-dot {
+  background: var(--green);
+  box-shadow: 0 0 6px rgba(0,255,157,0.8);
+  animation: cnn-pulse 1.1s ease-in-out infinite;
+}
+@keyframes cnn-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.35; }
+}
+.cnn-label { font-size: 0.72rem; font-weight: 900; letter-spacing: 0.1em; }
+.cnn-ms {
+  font-size: 0.68rem;
+  font-weight: 600;
+  opacity: 0.75;
+  padding-left: 2px;
+}
+
+/* ── CNN stats bar (below target bar) ───────────────────── */
+.cnn-stats {
+  position: absolute;
+  z-index: 10;
+  bottom: calc(max(16px, env(safe-area-inset-bottom, 16px)) + 78px);
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 0;
+  padding: 6px 14px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  backdrop-filter: var(--blur);
+  white-space: nowrap;
+  pointer-events: none;
+  user-select: none;
+  animation: fadein 0.25s ease;
+}
+.cnn-stat-item {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1px;
+  padding: 0 10px;
+}
+.cnn-stat-label {
+  font-size: 0.55rem;
+  font-weight: 900;
+  letter-spacing: 0.1em;
+  color: var(--text-dim);
+  text-transform: uppercase;
+}
+.cnn-stat-val {
+  font-size: 0.75rem;
+  font-weight: 700;
+  color: var(--green);
+}
+.cnn-stat-sep {
+  width: 1px;
+  height: 24px;
+  background: var(--border);
+  flex-shrink: 0;
+}
+
+/* ── Trained objects panel ───────────────────────────────── */
+.obj-panel {
+  position: absolute;
+  z-index: 20;
+  top: calc(max(14px, env(safe-area-inset-top, 14px)) + 62px);
+  right: max(14px, env(safe-area-inset-right, 14px));
+  width: min(320px, calc(100vw - 28px));
+  max-height: 70vh;
+  display: flex;
+  flex-direction: column;
+  border-radius: 18px;
+  border: 1px solid var(--border-hi);
+  background: rgba(2, 10, 6, 0.96);
+  backdrop-filter: var(--blur);
+  overflow: hidden;
+  animation: slideup 0.2s ease;
+  box-shadow: 0 8px 48px rgba(0,0,0,0.7);
+}
+.obj-panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 16px 10px;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+.obj-panel-title {
+  font-size: 0.78rem;
+  font-weight: 900;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--green);
+}
+.obj-panel-count {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: rgba(0,255,157,0.12);
+  border: 1px solid rgba(0,255,157,0.25);
+  font-size: 0.65rem;
+  font-weight: 700;
+  color: var(--green);
+  vertical-align: middle;
+}
+.obj-panel-close {
+  font-size: 1.2rem;
+  line-height: 1;
+  color: var(--text-dim);
+  border: none;
+  background: none;
+  padding: 2px 6px;
+  border-radius: 6px;
+  cursor: pointer;
+}
+.obj-panel-close:hover { color: var(--text); }
+.obj-panel-search {
+  flex-shrink: 0;
+  margin: 10px 12px 6px;
+  padding: 8px 12px;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: rgba(255,255,255,0.04);
+  color: var(--text);
+  font-size: 0.82rem;
+}
+.obj-panel-search:focus { outline: none; border-color: var(--border-hi); }
+.obj-panel-list {
+  overflow-y: auto;
+  padding: 6px 12px 14px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.obj-chip {
+  padding: 5px 11px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: rgba(255,255,255,0.04);
+  color: var(--text-dim);
+  font-size: 0.73rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.12s, border-color 0.12s, color 0.12s;
+  white-space: nowrap;
+}
+.obj-chip:hover {
+  border-color: var(--green);
+  background: rgba(0,255,157,0.08);
+  color: var(--green);
+}
+
 /* ── reduced motion ─────────────────────────────────────── */
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after {

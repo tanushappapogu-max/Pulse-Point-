@@ -147,8 +147,8 @@ export default function SettingsSheet({
 
         <footer className="settings-footer">
           <p className="settings-help">
-            Pulse Point uses your camera to find objects you describe.
-            Audio and vibration help guide you toward them.
+            Pulse Point runs a CNN on-device to detect and locate objects in real time.
+            Audio and vibration guide you toward them.
           </p>
         </footer>
       </div>

@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState, useCallback } from 'react';
 import { Camera, Loader2, ScanLine, Square, Mic, Settings as SettingsIcon, Flashlight, FlashlightOff } from 'lucide-react';
 
 import { COCO_LABELS, resolveCocoTarget, findClosestCocoLabel, TARGET_ALIASES, normalizeTargetText } from './detection/coco.js';
@@ -81,6 +81,10 @@ export default function App() {
   const [torchAvail,    setTorchAvail]    = useState(false);
   const [announcement,  setAnnouncement]  = useState('');
   const [announcementUrgent, setAnnouncementUrgent] = useState(false);
+  const [cnnMs,         setCnnMs]         = useState(null);   // last CNN inference latency
+  const [cnnConf,       setCnnConf]       = useState(null);   // last detection confidence
+  const [objPanelOpen,  setObjPanelOpen]  = useState(false);  // trained-objects drawer
+  const [objFilter,     setObjFilter]     = useState('');
 
   const canVoice = useMemo(() => isVoiceSupported(), []);
   const speechAvail = useMemo(() => speakerRef.current.isAvailable(), []);
@@ -218,7 +222,7 @@ export default function App() {
       isRunningRef.current = true;
       setIsRunning(true);
       setStatus('loading');
-      setAnnouncement('Loading object detection model…');
+      setAnnouncement('Initializing CNN model weights…');
       setAnnouncementUrgent(false);
       hapticsRef.current.fire('looking', true);
 
@@ -306,10 +310,12 @@ export default function App() {
         try {
           predictions = await runYolo(video, model);
           lastPredsRef.current = predictions;
-          recordInferenceTime(performance.now() - t0);
+          const elapsed = performance.now() - t0;
+          recordInferenceTime(elapsed);
+          setCnnMs(Math.round(elapsed));
         } catch (e) {
           // eslint-disable-next-line no-console
-          console.warn('YOLO inference failed', e);
+          console.warn('CNN inference failed', e);
           predictions = lastPredsRef.current;
         }
       }
@@ -372,6 +378,7 @@ export default function App() {
           distanceMeters: g.distanceMeters,
           fromAi: false,
         });
+        setCnnConf(Math.round(displayMatch.score * 100));
         setStatus(g.status);
         setSignal(g.signal);
 
@@ -496,11 +503,20 @@ export default function App() {
       <Announcer message={announcement} urgent={announcementUrgent} />
 
       {!isRunning && (
-        <button className="start-button" type="button" onClick={startScanner} aria-label="Start camera scanner">
+        <button className="start-button" type="button" onClick={startScanner} aria-label="Start CNN scanner">
           <Camera size={30} aria-hidden="true" />
           <span>Start</span>
         </button>
       )}
+
+      {/* CNN status badge — top-left */}
+      <div className={`cnn-badge${isRunning ? ' cnn-active' : ''}`} aria-hidden="true">
+        <span className="cnn-dot" />
+        <span className="cnn-label">CNN</span>
+        {isRunning && cnnMs != null && (
+          <span className="cnn-ms">{cnnMs}ms</span>
+        )}
+      </div>
 
       {/* Top-right control rail */}
       <div className="top-rail" role="group" aria-label="Quick controls">
@@ -518,6 +534,15 @@ export default function App() {
         <button
           type="button"
           className="rail-btn"
+          onClick={() => setObjPanelOpen(v => !v)}
+          aria-label="Show trained objects"
+          title="Trained objects"
+        >
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>
+        </button>
+        <button
+          type="button"
+          className="rail-btn"
           onClick={() => setSettingsOpen(true)}
           aria-label="Open settings"
         >
@@ -528,7 +553,67 @@ export default function App() {
       {status === 'loading' && (
         <div className="loading-pill" role="status">
           <Loader2 size={18} aria-hidden="true" />
-          <span>Loading…</span>
+          <span>Loading CNN weights…</span>
+        </div>
+      )}
+
+      {/* CNN inference stats bar — shows when running */}
+      {isRunning && (
+        <div className="cnn-stats" aria-hidden="true">
+          <span className="cnn-stat-item">
+            <span className="cnn-stat-label">MODEL</span>
+            <span className="cnn-stat-val">PulsePointNet</span>
+          </span>
+          <span className="cnn-stat-sep" />
+          <span className="cnn-stat-item">
+            <span className="cnn-stat-label">LATENCY</span>
+            <span className="cnn-stat-val">{cnnMs != null ? `${cnnMs} ms` : '—'}</span>
+          </span>
+          <span className="cnn-stat-sep" />
+          <span className="cnn-stat-item">
+            <span className="cnn-stat-label">CONF</span>
+            <span className="cnn-stat-val">{cnnConf != null ? `${cnnConf}%` : '—'}</span>
+          </span>
+        </div>
+      )}
+
+      {/* Trained objects drawer */}
+      {objPanelOpen && (
+        <div className="obj-panel" role="dialog" aria-label="Trained object classes">
+          <div className="obj-panel-header">
+            <span className="obj-panel-title">Trained Objects <span className="obj-panel-count">{KNOWN_OBJECTS.length}</span></span>
+            <button type="button" className="obj-panel-close" onClick={() => setObjPanelOpen(false)} aria-label="Close">×</button>
+          </div>
+          <input
+            className="obj-panel-search"
+            type="text"
+            placeholder="filter…"
+            value={objFilter}
+            onChange={e => setObjFilter(e.target.value)}
+            autoComplete="off"
+          />
+          <div className="obj-panel-list">
+            {(objFilter
+              ? KNOWN_OBJECTS.filter(o => o.includes(objFilter.toLowerCase()))
+              : KNOWN_OBJECTS
+            ).map(obj => (
+              <button
+                key={obj}
+                type="button"
+                className="obj-chip"
+                onClick={() => {
+                  setObjPanelOpen(false);
+                  setError('');
+                  setTarget(obj);
+                  setDraftTarget(obj);
+                  if (!isRunningRef.current) startScanner();
+                  else setStatus('looking');
+                }}
+              >
+                {obj}
+              </button>
+            ))}
+          </div>
         </div>
       )}
 
@@ -605,7 +690,7 @@ export default function App() {
           <span>
             {match
               ? `${match.direction} · ${match.distance}`
-              : hapticsAvail ? 'scan slowly' : 'visual guidance mode'}
+              : isRunning ? 'CNN scanning…' : 'point camera at object'}
           </span>
         </div>
       </div>
