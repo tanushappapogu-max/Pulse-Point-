@@ -3,6 +3,7 @@ import { Camera, Loader2, ScanLine, Square, Mic, Settings as SettingsIcon, Flash
 
 import { COCO_LABELS, resolveCocoTarget, findClosestCocoLabel, TARGET_ALIASES, normalizeTargetText } from './detection/coco.js';
 import { loadModel, runInference } from './detection/engine.js';
+import { detectWithServer, isServerAvailable } from './detection/server.js';
 import { BoxTracker } from './detection/tracker.js';
 import { KNOWN_OBJECTS } from './detection/objectList.js';
 
@@ -84,6 +85,8 @@ export default function App() {
   const [announcementUrgent, setAnnouncementUrgent] = useState(false);
   const [cnnMs,         setCnnMs]         = useState(null);   // last CNN inference latency
   const [cnnConf,       setCnnConf]       = useState(null);   // last detection confidence
+  const [serverMs,      setServerMs]      = useState(null);   // last PulsePointNet server latency
+  const [serverLabel,   setServerLabel]   = useState('');     // last PulsePointNet detected label
   const [objPanelOpen,  setObjPanelOpen]  = useState(false);  // trained-objects drawer
   const [objFilter,     setObjFilter]     = useState('');
 
@@ -117,7 +120,7 @@ export default function App() {
     localTargetRef.current = null;
     trackerRef.current.reset();
     lastAnnouncedSignalRef.current = '';
-    setAiLabel('');
+    setServerLabel('');
     resolveLocalTarget(t);
   }
 
@@ -210,6 +213,8 @@ export default function App() {
     aiInFlightRef.current   = false;
     trackerRef.current.reset();
     lastAnnouncedSignalRef.current = '';
+    setServerMs(null);
+    setServerLabel('');
 
     try {
       const stream = await getWideCameraStream();
@@ -261,6 +266,8 @@ export default function App() {
     setStatus('ready');
     aiBoxRef.current = null;
     trackerRef.current.reset();
+    setServerMs(null);
+    setServerLabel('');
     setTorchOn(false);
     setTorchAvail(false);
   }
@@ -321,6 +328,24 @@ export default function App() {
         }
       }
 
+      // ── Heavy path: PulsePointNet server every HEAVY_COOLDOWN_MS ──
+      // Runs async and non-blocking; result stored in aiBoxRef for next frame.
+      const ranHeavy = now - lastHeavyRunRef.current >= HEAVY_COOLDOWN_MS;
+      if (ranHeavy && tgt && !aiInFlightRef.current && isServerAvailable()) {
+        lastHeavyRunRef.current = now;
+        aiInFlightRef.current = true;
+        detectWithServer(video, tgt).then(result => {
+          aiInFlightRef.current = false;
+          if (result) {
+            aiBoxRef.current = result;
+            setServerMs(result.latency_ms ?? null);
+            setServerLabel(result.class);
+          } else {
+            aiBoxRef.current = null;
+          }
+        });
+      }
+
       const directLabel = resolveCocoTarget(tgt);
       const localInfo = localTargetRef.current;
       const mappedLabel = localInfo?.label || directLabel;
@@ -332,7 +357,13 @@ export default function App() {
         source: cocoMatchRaw,
       } : null;
 
-      let freshMatch = cocoMatch;
+      // ── Merge: use server result when YOLO has no match for the target ──
+      const serverResult = aiBoxRef.current;
+      let freshMatch = cocoMatch || (tgt && serverResult ? {
+        ...serverResult,
+        displayClass: tgt,
+        fromServer: true,
+      } : null);
 
       if (freshMatch && ranLight) {
         trackerRef.current.update(
@@ -562,18 +593,20 @@ export default function App() {
       {isRunning && (
         <div className="cnn-stats" aria-hidden="true">
           <span className="cnn-stat-item">
-            <span className="cnn-stat-label">MODEL</span>
-            <span className="cnn-stat-val">PulsePointNet</span>
-          </span>
-          <span className="cnn-stat-sep" />
-          <span className="cnn-stat-item">
-            <span className="cnn-stat-label">LATENCY</span>
+            <span className="cnn-stat-label">YOLO</span>
             <span className="cnn-stat-val">{cnnMs != null ? `${cnnMs} ms` : '—'}</span>
           </span>
           <span className="cnn-stat-sep" />
           <span className="cnn-stat-item">
             <span className="cnn-stat-label">CONF</span>
             <span className="cnn-stat-val">{cnnConf != null ? `${cnnConf}%` : '—'}</span>
+          </span>
+          <span className="cnn-stat-sep" />
+          <span className={`cnn-stat-item${serverMs != null ? ' cnn-server-active' : ''}`}>
+            <span className="cnn-stat-label">PPN</span>
+            <span className="cnn-stat-val">
+              {serverMs != null ? `${serverMs} ms${serverLabel ? ` · ${serverLabel}` : ''}` : isServerAvailable() ? 'ready' : 'offline'}
+            </span>
           </span>
         </div>
       )}
