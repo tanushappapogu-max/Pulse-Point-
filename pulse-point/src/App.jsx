@@ -17,6 +17,34 @@ import { loadSettings, saveSettings } from './lib/settings.js';
 
 import Announcer from './ui/Announcer.jsx';
 import SettingsSheet from './ui/SettingsSheet.jsx';
+import FeatureGrid from './ui/FeatureGrid.jsx';
+
+// CNN architecture displayed in the ribbon (YOLOv8n backbone + FPN + head)
+const ARCH_LAYERS = [
+  { id: 'input', label: 'INPUT',   dim: '3×640' },
+  { id: 'c1',    label: 'CONV',    dim: '32×320' },
+  { id: 'p1',    label: 'POOL',    dim: '32×160' },
+  { id: 'c2',    label: 'CONV',    dim: '64×80'  },
+  { id: 'p2',    label: 'POOL',    dim: '64×40'  },
+  { id: 'c3',    label: 'CONV',    dim: '128×20' },
+  { id: 'fpn',   label: 'FPN',     dim: '3×128'  },
+  { id: 'head',  label: 'HEAD',    dim: '8400×85'},
+  { id: 'nms',   label: 'NMS',     dim: 'detect' },
+];
+
+// Right-side layer depth panel (deep path through backbone)
+const LAYER_STACK = [
+  { name: 'CONV2D',     dim: '32×320×320', fill: 1.0 },
+  { name: 'BATCHNORM',  dim: '32',         fill: 1.0 },
+  { name: 'C2F-BLOCK',  dim: '64×160×160', fill: 0.85 },
+  { name: 'CONV2D',     dim: '128×80×80',  fill: 0.72 },
+  { name: 'C2F-BLOCK',  dim: '128×80×80',  fill: 0.65 },
+  { name: 'CONV2D',     dim: '256×40×40',  fill: 0.52 },
+  { name: 'C2F-BLOCK',  dim: '256×40×40',  fill: 0.44 },
+  { name: 'SPPF',       dim: '512×20×20',  fill: 0.35 },
+  { name: 'FPN-UP',     dim: '256×40×40',  fill: 0.28 },
+  { name: 'DETECT',     dim: '85×8400',    fill: 0.18 },
+];
 
 const HEAVY_COOLDOWN_MS = 2500;
 const NO_FIND_SECONDS = 3;
@@ -83,13 +111,15 @@ export default function App() {
   const [torchAvail,    setTorchAvail]    = useState(false);
   const [announcement,  setAnnouncement]  = useState('');
   const [announcementUrgent, setAnnouncementUrgent] = useState(false);
-  const [cnnMs,         setCnnMs]         = useState(null);   // last CNN inference latency
-  const [cnnConf,       setCnnConf]       = useState(null);   // last detection confidence
-  const [serverMs,      setServerMs]      = useState(null);   // last server inference latency
-  const [serverLabel,   setServerLabel]   = useState('');     // last server detected label
-  const [serverModel,   setServerModel]   = useState('');     // 'LocateAnything-3B' or 'PulsePointNet'
-  const [objPanelOpen,  setObjPanelOpen]  = useState(false);  // trained-objects drawer
-  const [objFilter,     setObjFilter]     = useState('');
+  const [cnnMs,          setCnnMs]          = useState(null);
+  const [cnnConf,        setCnnConf]        = useState(null);
+  const [serverMs,       setServerMs]       = useState(null);
+  const [serverLabel,    setServerLabel]    = useState('');
+  const [serverModel,    setServerModel]    = useState('');
+  const [activeLayerIdx, setActiveLayerIdx] = useState(0);
+  const [alternatives,   setAlternatives]   = useState([]);
+  const [objPanelOpen,   setObjPanelOpen]   = useState(false);
+  const [objFilter,      setObjFilter]      = useState('');
 
   const canVoice = useMemo(() => isVoiceSupported(), []);
   const speechAvail = useMemo(() => speakerRef.current.isAvailable(), []);
@@ -106,6 +136,15 @@ export default function App() {
     speakerRef.current.setRate(settings.speechRate);
     saveSettings(settings);
   }, [settings]);
+
+  // Cycle active layer in the architecture ribbon during inference
+  useEffect(() => {
+    if (!isRunning) { setActiveLayerIdx(0); return; }
+    const id = setInterval(() => {
+      setActiveLayerIdx(i => (i + 1) % ARCH_LAYERS.length);
+    }, 220);
+    return () => clearInterval(id);
+  }, [isRunning]);
 
   function setTarget(t) {
     targetRef.current = t;
@@ -345,8 +384,10 @@ export default function App() {
             setServerMs(result.latency_ms ?? null);
             setServerLabel(result.class);
             setServerModel(result.model || '');
+            setAlternatives(result.alternatives || []);
           } else {
             aiBoxRef.current = null;
+            setAlternatives([]);
           }
         });
       }
@@ -484,49 +525,147 @@ export default function App() {
     if (!canvas || !video) return;
 
     const W = video.videoWidth || 640, H = video.videoHeight || 480;
-    const displayW = canvas.clientWidth || W;
+    const displayW = canvas.clientWidth  || W;
     const displayH = canvas.clientHeight || H;
-    canvas.width = displayW;
+    canvas.width  = displayW;
     canvas.height = displayH;
     const ctx = canvas.getContext('2d');
     ctx.clearRect(0, 0, displayW, displayH);
 
-    const scale = Math.max(displayW / W, displayH / H);
+    const scale   = Math.max(displayW / W, displayH / H);
     const offsetX = (W * scale - displayW) / 2;
     const offsetY = (H * scale - displayH) / 2;
-    const mapBox = ([x, y, w, h]) => [x * scale - offsetX, y * scale - offsetY, w * scale, h * scale];
+    const mapBox  = ([x, y, w, h]) => [x * scale - offsetX, y * scale - offsetY, w * scale, h * scale];
 
+    // ── Feature extraction grid overlay (7×7 anchor grid) ──
+    if (isRunningRef.current) {
+      const GX = 7, GY = 7;
+      const cw = displayW / GX, ch = displayH / GY;
+      ctx.strokeStyle = 'rgba(0,255,157,0.045)';
+      ctx.lineWidth = 0.5;
+      ctx.setLineDash([]);
+      for (let r = 0; r <= GY; r++) {
+        ctx.beginPath(); ctx.moveTo(0, r * ch); ctx.lineTo(displayW, r * ch); ctx.stroke();
+      }
+      for (let c = 0; c <= GX; c++) {
+        ctx.beginPath(); ctx.moveTo(c * cw, 0); ctx.lineTo(c * cw, displayH); ctx.stroke();
+      }
+    }
+
+    // ── All YOLO boxes (showAllBoxes mode) ──
     if (settings.showAllBoxes) {
       predictions.forEach(p => {
         if (targetMatch?.source === p) return;
         const [x, y, w, h] = mapBox(p.bbox);
-        ctx.strokeStyle = 'rgba(255,255,255,0.28)';
-        ctx.lineWidth = 1.5;
-        ctx.setLineDash([]);
+        ctx.strokeStyle = 'rgba(255,255,255,0.20)';
+        ctx.lineWidth = 1;
+        ctx.setLineDash([3, 3]);
         ctx.strokeRect(x, y, w, h);
+        ctx.setLineDash([]);
       });
     }
 
     if (!targetMatch) return;
 
     const [x, y, bw, bh] = mapBox(targetMatch.bbox);
-    // visualize extrapolation: fade box as ageMs grows
-    const opacity = targetMatch.ageMs > 100 ? 0.7 : 1;
+    const cx = x + bw / 2, cy = y + bh / 2;
+    const opacity = targetMatch.ageMs > 120 ? 0.72 : 1.0;
     ctx.globalAlpha = opacity;
+
+    // ── Attention heatmap behind box ──
+    const grad = ctx.createRadialGradient(cx, cy, 0, cx, cy, Math.max(bw, bh) * 0.75);
+    grad.addColorStop(0, 'rgba(0,255,157,0.10)');
+    grad.addColorStop(0.5, 'rgba(0,255,157,0.04)');
+    grad.addColorStop(1,   'rgba(0,255,157,0)');
+    ctx.fillStyle = grad;
+    ctx.fillRect(x - bw * 0.25, y - bh * 0.25, bw * 1.5, bh * 1.5);
+
+    // ── Anchor lines from nearest grid intersections to box center ──
+    const GX = 7, GY = 7;
+    const cw = displayW / GX, ch = displayH / GY;
+    const nearCol = Math.round(cx / cw);
+    const nearRow = Math.round(cy / ch);
+    ctx.setLineDash([2, 5]);
+    ctx.lineWidth = 0.8;
+    for (let dr = -1; dr <= 1; dr++) {
+      for (let dc = -1; dc <= 1; dc++) {
+        const gx = (nearCol + dc) * cw;
+        const gy = (nearRow + dr) * ch;
+        if (gx < 0 || gx > displayW || gy < 0 || gy > displayH) continue;
+        const dist = Math.hypot(gx - cx, gy - cy);
+        ctx.strokeStyle = `rgba(0,255,157,${Math.max(0, 0.18 - dist / (displayW * 0.6))})`;
+        ctx.beginPath(); ctx.moveTo(gx, gy); ctx.lineTo(cx, cy); ctx.stroke();
+        // Anchor dot
+        ctx.setLineDash([]);
+        ctx.beginPath(); ctx.arc(gx, gy, 2, 0, Math.PI * 2);
+        ctx.fillStyle = 'rgba(0,255,157,0.28)'; ctx.fill();
+        ctx.setLineDash([2, 5]);
+      }
+    }
+    ctx.setLineDash([]);
+
+    // ── Corner bracket box (technical CNN style) ──
+    const cl = Math.min(bw, bh) * 0.22;
     ctx.strokeStyle = '#00ff9d';
-    ctx.lineWidth   = 8;
+    ctx.lineWidth = 2.5;
+    // TL
+    ctx.beginPath(); ctx.moveTo(x, y + cl); ctx.lineTo(x, y); ctx.lineTo(x + cl, y); ctx.stroke();
+    // TR
+    ctx.beginPath(); ctx.moveTo(x + bw - cl, y); ctx.lineTo(x + bw, y); ctx.lineTo(x + bw, y + cl); ctx.stroke();
+    // BL
+    ctx.beginPath(); ctx.moveTo(x, y + bh - cl); ctx.lineTo(x, y + bh); ctx.lineTo(x + cl, y + bh); ctx.stroke();
+    // BR
+    ctx.beginPath(); ctx.moveTo(x + bw - cl, y + bh); ctx.lineTo(x + bw, y + bh); ctx.lineTo(x + bw, y + bh - cl); ctx.stroke();
+
+    // Faint full outline
+    ctx.strokeStyle = 'rgba(0,255,157,0.25)';
+    ctx.lineWidth = 0.8;
     ctx.strokeRect(x, y, bw, bh);
+
+    // Center crosshair
+    const cl2 = 7;
+    ctx.strokeStyle = 'rgba(0,255,157,0.55)';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(cx - cl2, cy); ctx.lineTo(cx + cl2, cy);
+    ctx.moveTo(cx, cy - cl2); ctx.lineTo(cx, cy + cl2);
+    ctx.stroke();
+
     ctx.globalAlpha = 1;
 
+    // ── Label chip (monospace, technical) ──
     const display = targetMatch.displayClass || targetMatch.class;
-    const label = `${display} ${Math.round(targetMatch.score * 100)}%`;
-    const labelW = Math.min(280, bw);
+    const conf    = Math.round(targetMatch.score * 100);
+    const label   = `${display.toUpperCase()}  ${conf}%`;
+    ctx.font = '600 12px "JetBrains Mono", ui-monospace, monospace';
+    const tw = ctx.measureText(label).width;
+    const lw = tw + 18, lh = 20;
+    const ly = Math.max(lh + 2, y) - lh - 2;
+
     ctx.fillStyle = '#00ff9d';
-    ctx.fillRect(x, Math.max(0, y - 38), labelW, 38);
-    ctx.fillStyle = '#05100d';
-    ctx.font = '800 20px system-ui';
-    ctx.fillText(label, x + 10, Math.max(26, y - 12));
+    ctx.beginPath();
+    ctx.roundRect(x, ly, lw, lh, 3);
+    ctx.fill();
+
+    ctx.fillStyle = '#021108';
+    ctx.fillText(label, x + 9, ly + 14);
+
+    // Pixel coord annotation (bottom-right of box)
+    ctx.font = '500 9px ui-monospace, monospace';
+    ctx.fillStyle = 'rgba(0,255,157,0.45)';
+    const coordTxt = `[${Math.round(x)},${Math.round(y)}]`;
+    ctx.fillText(coordTxt, x + 3, Math.min(displayH - 4, y + bh + 11));
   }
+
+  // Build alternatives list for confidence histogram
+  const confBars = (() => {
+    if (match && cnnConf != null) {
+      const top = [{ name: match.name, confidence: cnnConf / 100 }];
+      const alts = alternatives.slice(0, 4).filter(a => a.name !== match.name);
+      return [...top, ...alts].slice(0, 5);
+    }
+    return alternatives.slice(0, 5);
+  })();
 
   return (
     <main className={`scanner signal-${signal}`}>
@@ -550,10 +689,23 @@ export default function App() {
       <div className={`cnn-badge${isRunning ? ' cnn-active' : ''}`} aria-hidden="true">
         <span className="cnn-dot" />
         <span className="cnn-label">CNN</span>
-        {isRunning && cnnMs != null && (
-          <span className="cnn-ms">{cnnMs}ms</span>
-        )}
+        {isRunning && cnnMs != null && <span className="cnn-ms">{cnnMs}ms</span>}
       </div>
+
+      {/* Architecture ribbon — top-center, only when running */}
+      {isRunning && (
+        <div className="arch-ribbon" aria-hidden="true">
+          {ARCH_LAYERS.map((layer, i) => (
+            <React.Fragment key={layer.id}>
+              <div className={`arch-node${i === activeLayerIdx ? ' arch-active' : i < activeLayerIdx ? ' arch-done' : ''}`}>
+                <span className="arch-node-name">{layer.label}</span>
+                <span className="arch-node-dim">{layer.dim}</span>
+              </div>
+              {i < ARCH_LAYERS.length - 1 && <span className="arch-arrow">›</span>}
+            </React.Fragment>
+          ))}
+        </div>
+      )}
 
       {/* Top-right control rail */}
       <div className="top-rail" role="group" aria-label="Quick controls">
@@ -590,15 +742,43 @@ export default function App() {
       {status === 'loading' && (
         <div className="loading-pill" role="status">
           <Loader2 size={18} aria-hidden="true" />
-          <span>Loading CNN weights…</span>
+          <span>Loading weights…</span>
         </div>
       )}
 
-      {/* CNN inference stats bar — shows when running */}
+      {/* Feature activation grid — bottom-left */}
+      {isRunning && (
+        <FeatureGrid active={!!match} confidence={cnnConf ?? 0} />
+      )}
+
+      {/* Layer depth panel — right side */}
+      {isRunning && (
+        <div className="layer-panel" aria-hidden="true">
+          {LAYER_STACK.map((layer, i) => {
+            const isActive = match && i === Math.floor(activeLayerIdx / ARCH_LAYERS.length * LAYER_STACK.length);
+            return (
+              <div key={i} className={`layer-row${isActive ? ' layer-active' : ''}`}>
+                <div className="layer-bar-track">
+                  <div
+                    className="layer-bar-fill"
+                    style={{ height: `${(match ? layer.fill : layer.fill * 0.25) * 100}%` }}
+                  />
+                </div>
+                <div className="layer-info">
+                  <span className="layer-name">{layer.name}</span>
+                  <span className="layer-dim">{layer.dim}</span>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {/* CNN inference stats bar */}
       {isRunning && (
         <div className="cnn-stats" aria-hidden="true">
           <span className="cnn-stat-item">
-            <span className="cnn-stat-label">YOLO</span>
+            <span className="cnn-stat-label">INFER</span>
             <span className="cnn-stat-val">{cnnMs != null ? `${cnnMs} ms` : '—'}</span>
           </span>
           <span className="cnn-stat-sep" />
@@ -607,14 +787,36 @@ export default function App() {
             <span className="cnn-stat-val">{cnnConf != null ? `${cnnConf}%` : '—'}</span>
           </span>
           <span className="cnn-stat-sep" />
+          <span className="cnn-stat-item">
+            <span className="cnn-stat-label">ANCHORS</span>
+            <span className="cnn-stat-val">8400</span>
+          </span>
+          <span className="cnn-stat-sep" />
           <span className={`cnn-stat-item${serverMs != null ? ' cnn-server-active' : ''}`}>
-            <span className="cnn-stat-label">{serverModel === 'LocateAnything-3B' ? 'LA-3B' : 'PPN'}</span>
+            <span className="cnn-stat-label">GRND</span>
             <span className="cnn-stat-val">
-              {serverMs != null
-                ? `${serverMs} ms${serverLabel ? ` · ${serverLabel}` : ''}`
-                : isServerAvailable() ? 'ready' : 'offline'}
+              {serverMs != null ? `${serverMs} ms` : isServerAvailable() ? 'ready' : 'off'}
             </span>
           </span>
+        </div>
+      )}
+
+      {/* Confidence histogram — bottom-right */}
+      {isRunning && confBars.length > 0 && (
+        <div className="conf-hist" aria-hidden="true">
+          <div className="conf-hist-title">CLASS PROB</div>
+          {confBars.map((bar, i) => (
+            <div key={i} className="conf-bar-row">
+              <span className="conf-bar-label">{bar.name}</span>
+              <div className="conf-bar-track">
+                <div
+                  className={`conf-bar-fill ${i === 0 ? 'top' : 'alt'}`}
+                  style={{ width: `${Math.round((bar.confidence ?? 0) * 100)}%` }}
+                />
+              </div>
+              <span className="conf-bar-pct">{Math.round((bar.confidence ?? 0) * 100)}%</span>
+            </div>
+          ))}
         </div>
       )}
 
@@ -661,14 +863,7 @@ export default function App() {
       {error && (
         <div className="error-pill" role="alert">
           {error}
-          <button
-            type="button"
-            className="error-dismiss"
-            onClick={() => setError('')}
-            aria-label="Dismiss error"
-          >
-            ×
-          </button>
+          <button type="button" className="error-dismiss" onClick={() => setError('')} aria-label="Dismiss error">×</button>
         </div>
       )}
 
@@ -731,7 +926,7 @@ export default function App() {
           <span>
             {match
               ? `${match.direction} · ${match.distance}`
-              : isRunning ? 'CNN scanning…' : 'point camera at object'}
+              : isRunning ? 'inference running…' : 'point camera at object'}
           </span>
         </div>
       </div>
