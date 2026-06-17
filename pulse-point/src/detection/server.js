@@ -46,12 +46,13 @@ export async function detectWithServer(video, target = '') {
 
         const bb = data.boundingBox;
         resolve({
-          class:       data.name,
-          score:       data.confidence,
-          bbox:        [bb.x * W, bb.y * H, bb.width * W, bb.height * H],
-          fromServer:  true,
+          class:        data.name,
+          score:        data.confidence,
+          bbox:         [bb.x * W, bb.y * H, bb.width * W, bb.height * H],
+          fromServer:   true,
+          model:        data.model || 'PulsePointNet',
           alternatives: data.alternatives || [],
-          latency_ms:  data.latency_ms,
+          latency_ms:   data.latency_ms,
         });
       } catch {
         _available = false;

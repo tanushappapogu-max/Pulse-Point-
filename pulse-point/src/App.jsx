@@ -85,8 +85,9 @@ export default function App() {
   const [announcementUrgent, setAnnouncementUrgent] = useState(false);
   const [cnnMs,         setCnnMs]         = useState(null);   // last CNN inference latency
   const [cnnConf,       setCnnConf]       = useState(null);   // last detection confidence
-  const [serverMs,      setServerMs]      = useState(null);   // last PulsePointNet server latency
-  const [serverLabel,   setServerLabel]   = useState('');     // last PulsePointNet detected label
+  const [serverMs,      setServerMs]      = useState(null);   // last server inference latency
+  const [serverLabel,   setServerLabel]   = useState('');     // last server detected label
+  const [serverModel,   setServerModel]   = useState('');     // 'LocateAnything-3B' or 'PulsePointNet'
   const [objPanelOpen,  setObjPanelOpen]  = useState(false);  // trained-objects drawer
   const [objFilter,     setObjFilter]     = useState('');
 
@@ -121,6 +122,7 @@ export default function App() {
     trackerRef.current.reset();
     lastAnnouncedSignalRef.current = '';
     setServerLabel('');
+    setServerModel('');
     resolveLocalTarget(t);
   }
 
@@ -215,6 +217,7 @@ export default function App() {
     lastAnnouncedSignalRef.current = '';
     setServerMs(null);
     setServerLabel('');
+    setServerModel('');
 
     try {
       const stream = await getWideCameraStream();
@@ -268,6 +271,7 @@ export default function App() {
     trackerRef.current.reset();
     setServerMs(null);
     setServerLabel('');
+    setServerModel('');
     setTorchOn(false);
     setTorchAvail(false);
   }
@@ -340,6 +344,7 @@ export default function App() {
             aiBoxRef.current = result;
             setServerMs(result.latency_ms ?? null);
             setServerLabel(result.class);
+            setServerModel(result.model || '');
           } else {
             aiBoxRef.current = null;
           }
@@ -603,9 +608,11 @@ export default function App() {
           </span>
           <span className="cnn-stat-sep" />
           <span className={`cnn-stat-item${serverMs != null ? ' cnn-server-active' : ''}`}>
-            <span className="cnn-stat-label">PPN</span>
+            <span className="cnn-stat-label">{serverModel === 'LocateAnything-3B' ? 'LA-3B' : 'PPN'}</span>
             <span className="cnn-stat-val">
-              {serverMs != null ? `${serverMs} ms${serverLabel ? ` · ${serverLabel}` : ''}` : isServerAvailable() ? 'ready' : 'offline'}
+              {serverMs != null
+                ? `${serverMs} ms${serverLabel ? ` · ${serverLabel}` : ''}`
+                : isServerAvailable() ? 'ready' : 'offline'}
             </span>
           </span>
         </div>

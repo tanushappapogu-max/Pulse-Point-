@@ -2,11 +2,13 @@ from fastapi import FastAPI, UploadFile, File, Form, Body
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 import time
+
+from locate_model import locate_object, is_available as locate_available
 from model import predict, INDOOR_OBJECT_ONTOLOGY as INDOOR_OBJECTS
 from text_model import classify_text, retrain
 from tea_dataset import TEA_TYPES, FLAVOR_LABELS, QUALITY_TIERS
 
-app = FastAPI(title="Pulse Point Vision + Tea Text API")
+app = FastAPI(title="Pulse Point Vision API")
 
 app.add_middleware(
     CORSMiddleware,
@@ -18,7 +20,11 @@ app.add_middleware(
 
 @app.get("/health")
 async def health():
-    return {"status": "ok", "objects": len(INDOOR_OBJECTS)}
+    return {
+        "status": "ok",
+        "locate_anything": locate_available(),
+        "fallback_objects": len(INDOOR_OBJECTS),
+    }
 
 
 @app.get("/objects")
@@ -40,11 +46,18 @@ async def detect(
             content={"error": "Image too large. Max 10MB."},
         )
 
-    result = predict(image_bytes, target_name=target if target else None)
+    result = None
+
+    # ── Primary: LocateAnything-3B (open-vocabulary, any target) ──
+    if target:
+        result = locate_object(image_bytes, target)
+
+    # ── Fallback: PulsePointNet (indoor-object ontology, ~45 classes) ──
+    if result is None:
+        result = predict(image_bytes, target_name=target if target else None)
+
     result["latency_ms"] = round((time.time() - start) * 1000)
-
     return result
-
 
 
 # ── Text / Tea CNN endpoints ─────────────────────────────────────────────────
@@ -54,14 +67,6 @@ async def classify_text_endpoint(
     text: str = Body(..., embed=True, description="Tea description or spoken query"),
     top_k: int = Body(3, embed=True, description="Number of alternative tea types to return"),
 ):
-    """
-    Run TeaTextCNN on a text string.
-
-    Returns tea type, flavor profile, quality tier, and a 256-dim sentence embedding.
-    The model auto-trains on first call if no checkpoint exists (~5 seconds).
-
-    Example body: {"text": "gyokuro shade-grown umami marine vegetal", "top_k": 3}
-    """
     if not text or not text.strip():
         return JSONResponse(status_code=422, content={"error": "text must be non-empty"})
     if len(text) > 512:
@@ -76,9 +81,8 @@ async def classify_text_endpoint(
 
 @app.get("/tea-schema")
 async def tea_schema():
-    """Return the label ontology used by the TextCNN."""
     return {
-        "tea_types":    TEA_TYPES,
+        "tea_types":     TEA_TYPES,
         "flavor_labels": FLAVOR_LABELS,
         "quality_tiers": QUALITY_TIERS,
     }
@@ -86,7 +90,6 @@ async def tea_schema():
 
 @app.post("/retrain-text")
 async def retrain_text():
-    """Re-train the TeaTextCNN from scratch (runs synchronously, ~5–15 s on CPU)."""
     start = time.time()
     info = retrain()
     info["duration_ms"] = round((time.time() - start) * 1000)
