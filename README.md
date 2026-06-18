@@ -1,6 +1,6 @@
 # Pulse Point
 
-**Live demo:** https://pulse-point.vercel.app
+**Live demo:** https://pulse-point-steel.vercel.app
 
 [![Tests](https://github.com/ketchup235/Pulse-Point/actions/workflows/test.yml/badge.svg)](https://github.com/ketchup235/Pulse-Point/actions/workflows/test.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
@@ -111,7 +111,7 @@ Set these in Vercel Project Settings → Environment Variables.
 | Variable | Description |
 |---|---|
 | `OPENROUTER_API_KEY` | Server-side key used by `api/ai.js`. **Do not** prefix with `VITE_` — Vite inlines those into the client bundle and exposes them publicly. |
-| `ALLOWED_ORIGIN` | Optional. Restricts CORS to a specific origin (defaults to `https://pulse-point.vercel.app`). |
+| `ALLOWED_ORIGIN` | Optional. Restricts CORS to a specific origin (defaults to `https://pulse-point-steel.vercel.app`). |
 
 Old prototype builds used `VITE_GEMINI_API_KEY` shipped to the browser. Remove that variable from production. The proxy at `/api/ai` is the supported path.
 

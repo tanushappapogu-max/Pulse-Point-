@@ -34,7 +34,7 @@ const ALLOWED_MODELS = new Set([
 
 // Allowed origins: production deployment + local dev ports.
 const ALLOWED_ORIGINS = new Set([
-  process.env.ALLOWED_ORIGIN || 'https://pulse-point.vercel.app',
+  process.env.ALLOWED_ORIGIN || 'https://pulse-point-steel.vercel.app',
   'http://localhost:5173',
   'http://localhost:4173',
 ]);
@@ -135,7 +135,7 @@ export default async function handler(req, res) {
         authorization: `Bearer ${key}`,
         'content-type': 'application/json',
         // OpenRouter likes a referer for free-tier rate limit fairness
-        'http-referer': origin || 'https://pulse-point.vercel.app',
+        'http-referer': origin || 'https://pulse-point-steel.vercel.app',
         'x-title': 'Pulse Point',
       },
       body: JSON.stringify(body),
