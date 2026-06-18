@@ -15,6 +15,11 @@
 const MIN_GAP_MS = 2000;
 const URGENT_GAP_MS = 600;
 
+// Silent pause inserted between consecutive spoken instructions so they don't
+// run into each other. Urgent signals get a shorter pause to stay responsive.
+const INTER_SPEECH_PAUSE_MS = 500;
+const URGENT_PAUSE_MS = 150;
+
 export class Speaker {
   constructor() {
     this.lastSaid = '';
@@ -108,7 +113,10 @@ export class Speaker {
       const urgent = this.pendingUrgent;
       this.pendingText = null;
       this.pendingUrgent = false;
-      this.say(text, { urgent });
+      // Wait out a short pause so the next instruction has a clear gap after
+      // the previous one finishes instead of running straight into it.
+      const pause = urgent ? URGENT_PAUSE_MS : INTER_SPEECH_PAUSE_MS;
+      setTimeout(() => this.say(text, { urgent }), pause);
     }
   }
 
