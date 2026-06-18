@@ -66,9 +66,15 @@ export class Speaker {
     const now = Date.now();
     const gap = urgent ? URGENT_GAP_MS : MIN_GAP_MS;
     
-    // Don't repeat the same phrase too soon
-    if (!force && text === this.lastSaid && now - this.lastTime < gap) return;
-    
+    // Don't repeat the same phrase too soon. This applies even to forced/urgent
+    // signals: a continuously-firing signal like "closer" calls say() every
+    // frame, and without this guard each call would cancel and restart the
+    // in-progress utterance, producing "close-close-close-closer" stutter.
+    if (text === this.lastSaid && now - this.lastTime < gap) return;
+
+    // If the same phrase is still being spoken, never interrupt it with itself.
+    if (this.isSpeaking && text === this.lastSaid) return;
+
     // If currently speaking, queue instead of interrupting (except for forced urgent)
     if (this.isSpeaking && !(force && urgent)) {
       this.pendingText = text;
