@@ -11,6 +11,7 @@
     "test:watch": "vitest"
   },
   "dependencies": {
+    "@huggingface/transformers": "^3.8.1",
     "@tensorflow/tfjs": "4.22.0",
     "@vitejs/plugin-react": "5.0.4",
     "lucide-react": "0.468.0",

@@ -1,21 +1,62 @@
-const SERVER_URL = import.meta.env.VITE_SERVER_URL || '';
-const ENDPOINT = SERVER_URL ? `${SERVER_URL}/detect` : '/api/detect';
-
-let _available = true;
-let _lastFailTime = 0;
-const BACKOFF_MS = 10_000;
-
 /**
- * Send a video frame to PulsePointNet and return a prediction in the same
- * shape as engine.js ({ class, score, bbox: [x,y,w,h] in pixels }) or null.
+ * Browser-side visual grounding using Florence-2-base-ft.
+ *
+ * Exports the same API as before so App.jsx needs no changes:
+ *   detectWithServer(video, target) → {class, score, bbox, latency_ms, …} | null
+ *   isServerAvailable()            → bool
+ *
+ * Florence-2 runs fully in-browser via Transformers.js (ONNX WASM backend).
+ * The model downloads once and is cached in IndexedDB.
  */
+
+import {
+  Florence2ForConditionalGeneration,
+  AutoProcessor,
+  RawImage,
+} from '@huggingface/transformers';
+
+const MODEL_ID = 'onnx-community/Florence-2-base-ft';
+const TASK     = '<OPEN_VOCABULARY_DETECTION>';
+
+let _processor = null;
+let _model     = null;
+let _loading   = false;
+let _ready     = false;
+let _failed    = false;
+
+async function _load() {
+  if (_loading || _ready || _failed) return;
+  _loading = true;
+  try {
+    _processor = await AutoProcessor.from_pretrained(MODEL_ID);
+    _model = await Florence2ForConditionalGeneration.from_pretrained(MODEL_ID, {
+      dtype: { encoder_model: 'fp16', decoder_model_merged: 'q4' },
+    });
+    _ready = true;
+    console.log('[Ground] Florence-2 ready');
+  } catch (e) {
+    _failed = true;
+    console.warn('[Ground] Florence-2 load failed:', e);
+  } finally {
+    _loading = false;
+  }
+}
+
+// Begin loading immediately in background — cached after first visit
+_load();
+
+export function isServerAvailable() {
+  return _ready;
+}
+
 export async function detectWithServer(video, target = '') {
-  if (!video || video.readyState < 2) return null;
+  if (!video || video.readyState < 2 || !target) return null;
+  if (!_ready) {
+    if (!_loading && !_failed) _load();
+    return null;
+  }
 
-  const now = Date.now();
-  if (!_available && now - _lastFailTime < BACKOFF_MS) return null;
-
-  const W = video.videoWidth || 640;
+  const W = video.videoWidth  || 640;
   const H = video.videoHeight || 480;
 
   const canvas = document.createElement('canvas');
@@ -23,46 +64,34 @@ export async function detectWithServer(video, target = '') {
   canvas.height = H;
   canvas.getContext('2d').drawImage(video, 0, 0, W, H);
 
-  return new Promise(resolve => {
-    canvas.toBlob(async blob => {
-      if (!blob) { resolve(null); return; }
-      try {
-        const fd = new FormData();
-        fd.append('image', blob, 'frame.jpg');
-        if (target) fd.append('target', target);
+  const t0 = performance.now();
+  try {
+    const image  = await RawImage.fromCanvas(canvas);
+    const inputs = await _processor(image, TASK + target);
 
-        const res = await fetch(ENDPOINT, {
-          method: 'POST',
-          body: fd,
-          signal: AbortSignal.timeout(5000),
-        });
+    const ids = await _model.generate({ ...inputs, max_new_tokens: 256 });
+    const raw = _processor.batch_decode(ids, { skip_special_tokens: false })[0];
+    const out = _processor.post_process_generation(raw, TASK, [W, H]);
+    const det = out[TASK];
 
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    if (!det?.bboxes?.length) return null;
 
-        const data = await res.json();
-        _available = true;
+    const [x1, y1, x2, y2] = det.bboxes[0];
 
-        if (!data.detected) { resolve(null); return; }
-
-        const bb = data.boundingBox;
-        resolve({
-          class:        data.name,
-          score:        data.confidence,
-          bbox:         [bb.x * W, bb.y * H, bb.width * W, bb.height * H],
-          fromServer:   true,
-          model:        data.model || 'PulsePointNet',
-          alternatives: data.alternatives || [],
-          latency_ms:   data.latency_ms,
-        });
-      } catch {
-        _available = false;
-        _lastFailTime = Date.now();
-        resolve(null);
-      }
-    }, 'image/jpeg', 0.82);
-  });
-}
-
-export function isServerAvailable() {
-  return _available || Date.now() - _lastFailTime >= BACKOFF_MS;
+    return {
+      class:        det.labels?.[0] || target,
+      score:        0.88,
+      bbox:         [x1, y1, x2 - x1, y2 - y1],
+      fromServer:   false,
+      model:        'Florence-2',
+      alternatives: det.bboxes.slice(1, 5).map((b, i) => ({
+        name:       det.labels?.[i + 1] || target,
+        confidence: 0.75,
+      })),
+      latency_ms:   Math.round(performance.now() - t0),
+    };
+  } catch (e) {
+    console.warn('[Ground] Inference error:', e);
+    return null;
+  }
 }
