@@ -85,15 +85,18 @@ export class Speaker {
     if (this.voice) u.voice = this.voice;
     
     u.onstart = () => { this.isSpeaking = true; };
-    u.onend = () => { 
+    u.onend = () => {
       this.isSpeaking = false;
       this._playPending();
     };
-    u.onerror = () => { 
+    u.onerror = () => {
       this.isSpeaking = false;
       this._playPending();
     };
-    
+
+    // Mark speaking synchronously so a second say() before onstart fires
+    // queues instead of starting an overlapping utterance.
+    this.isSpeaking = true;
     window.speechSynthesis.speak(u);
     this.lastSaid = text;
     this.lastTime = now;
