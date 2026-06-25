@@ -43,3 +43,4 @@ convert_tfjs.py
 
 # Python ML venv (lives at ~/ml-env, not in repo)
 ml-env/
+__pycache__/
